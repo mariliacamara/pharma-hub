@@ -24,6 +24,9 @@ export interface CredentialKey {
 
 const KEY_FORMAT = 'must be "<version>:<base64 of 32 random bytes>"'
 
+// The key printed in .env.example. Public, so worthless as a key.
+const EXAMPLE_KEY = 'local-development-only-not-a-key'
+
 function isPostgresUrl(value: string): boolean {
   try {
     const { protocol } = new URL(value)
@@ -118,6 +121,20 @@ const schema = z
         code: 'custom',
         path: ['CREDENTIALS_PREVIOUS_KEYS'],
         message: 'every key needs its own version number'
+      })
+    }
+
+    const keys = [value.CREDENTIALS_MASTER_KEY, ...value.CREDENTIALS_PREVIOUS_KEYS]
+    const usesExample = keys.some(
+      (entry) => entry.key.toString('latin1') === EXAMPLE_KEY
+    )
+    if (value.NODE_ENV === 'production' && usesExample) {
+      context.addIssue({
+        code: 'custom',
+        path: ['CREDENTIALS_MASTER_KEY'],
+        message:
+          'is the example key from .env.example; '
+          + 'generate one with: openssl rand -base64 32'
       })
     }
 

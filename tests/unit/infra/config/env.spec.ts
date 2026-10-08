@@ -119,6 +119,21 @@ describe('parseEnv', () => {
       expect(problems.join(' ')).not.toContain(value.slice(2, 14) || '\u0000')
     })
 
+    it('refuses the example key in production, and only there', () => {
+      const example = keyOf(1, Buffer.from('local-development-only-not-a-key'))
+      const source = { ...valid, CREDENTIALS_MASTER_KEY: example }
+
+      expect(parseEnv({ ...source, NODE_ENV: 'development' })).toBeDefined()
+      expect(problemsOf({ ...source, NODE_ENV: 'production' })).toEqual([
+        'CREDENTIALS_MASTER_KEY: is the example key from .env.example; '
+        + 'generate one with: openssl rand -base64 32'
+      ])
+      // Also when it hides among the previous keys.
+      expect(
+        problemsOf({ ...valid, CREDENTIALS_PREVIOUS_KEYS: keyOf(9, Buffer.from('local-development-only-not-a-key')) })
+      ).toHaveLength(1)
+    })
+
     it('tolerates spaces around the value', () => {
       const env = parseEnv({
         ...valid,
