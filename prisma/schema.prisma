@@ -1,0 +1,249 @@
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model api_tokens {
+  id           String         @id @db.Uuid
+  store_id     String         @db.Uuid
+  token_hash   Bytes          @unique
+  token_prefix String
+  label        String
+  scopes       String[]
+  created_at   DateTime       @default(now()) @db.Timestamptz(6)
+  expires_at   DateTime?      @db.Timestamptz(6)
+  revoked_at   DateTime?      @db.Timestamptz(6)
+  last_used_at DateTime?      @db.Timestamptz(6)
+  stores       stores         @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  audit_events audit_events[]
+
+  @@index([store_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model audit_events {
+  id             BigInt      @id @default(autoincrement())
+  occurred_at    DateTime    @default(now()) @db.Timestamptz(6)
+  actor_type     String
+  actor_user_id  String?     @db.Uuid
+  actor_token_id String?     @db.Uuid
+  actor_label    String
+  store_id       String?     @db.Uuid
+  action         String
+  target         String?
+  details        Json        @default("{}")
+  ip             String?     @db.Inet
+  api_tokens     api_tokens? @relation(fields: [actor_token_id], references: [id], onUpdate: NoAction)
+  users          users?      @relation(fields: [actor_user_id], references: [id], onUpdate: NoAction)
+  stores         stores?     @relation(fields: [store_id], references: [id], onUpdate: NoAction)
+
+  @@index([actor_token_id])
+  @@index([actor_user_id])
+  @@index([store_id, occurred_at(sort: Desc)], map: "audit_events_store_occurred_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model job_runs {
+  id                   String                 @id @db.Uuid
+  store_id             String                 @db.Uuid
+  job_type             String
+  trigger              String
+  status               String                 @default("queued")
+  requested_by         String?
+  items_total          Int                    @default(0)
+  items_ok             Int                    @default(0)
+  items_failed         Int                    @default(0)
+  error_code           String?
+  queued_at            DateTime               @default(now()) @db.Timestamptz(6)
+  started_at           DateTime?              @db.Timestamptz(6)
+  finished_at          DateTime?              @db.Timestamptz(6)
+  stores               stores                 @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  kk_price_comparisons kk_price_comparisons[]
+
+  @@unique([store_id, job_type], map: "job_runs_one_active_exclusive_run_idx", where: raw("((status = ANY (ARRAY['queued'::text, 'running'::text])) AND (job_type = 'kk_full_collection'::text))"))
+  @@unique([store_id, id])
+  @@index([store_id, job_type, queued_at(sort: Desc)], map: "job_runs_store_type_queued_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model kk_page_snapshots {
+  id                   BigInt                 @id @default(autoincrement())
+  product_id           BigInt
+  fetched_at           DateTime               @default(now()) @db.Timestamptz(6)
+  outcome              String
+  http_status          Int?                   @db.SmallInt
+  offers               Json?
+  parser_version       Int                    @db.SmallInt
+  kk_products          kk_products            @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  kk_price_comparisons kk_price_comparisons[]
+
+  @@index([fetched_at])
+  @@index([product_id, fetched_at(sort: Desc)], map: "kk_page_snapshots_product_fetched_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model kk_price_comparisons {
+  id                      BigInt             @id @default(autoincrement())
+  store_id                String             @db.Uuid
+  run_id                  String             @db.Uuid
+  store_offer_id          BigInt
+  snapshot_id             BigInt?
+  outcome                 String
+  store_price_cents       Int
+  store_is_listed         Boolean?
+  lowest_price_cents      Int?
+  lowest_store_name       String?
+  lowest_store_slug       String?
+  difference_cents        Int?
+  store_position          Int?               @db.SmallInt
+  store_count             Int?               @db.SmallInt
+  store_total_cents       Int?
+  lowest_total_cents      Int?
+  lowest_total_store_name String?
+  compared_at             DateTime           @default(now()) @db.Timestamptz(6)
+  kk_page_snapshots       kk_page_snapshots? @relation(fields: [snapshot_id], references: [id], onUpdate: NoAction)
+  job_runs                job_runs           @relation(fields: [store_id, run_id], references: [store_id, id], onDelete: Cascade, onUpdate: NoAction)
+  kk_store_offers         kk_store_offers    @relation(fields: [store_id, store_offer_id], references: [store_id, id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([run_id, store_offer_id])
+  @@index([store_offer_id, compared_at(sort: Desc)], map: "kk_price_comparisons_offer_compared_idx")
+  @@index([snapshot_id])
+}
+
+model kk_products {
+  id                BigInt              @id @default(autoincrement())
+  external_id       BigInt              @unique
+  url               String
+  name              String
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  kk_page_snapshots kk_page_snapshots[]
+  kk_store_offers   kk_store_offers[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model kk_store_offers {
+  id                   BigInt                 @id @default(autoincrement())
+  store_id             String                 @db.Uuid
+  product_id           BigInt
+  kk_offer_ref         String
+  sku                  String?
+  ean                  String?
+  name                 String
+  store_url            String
+  price_cents          Int
+  stock                Int
+  is_top_box           Boolean
+  listing_status       String                 @default("listed")
+  kk_updated_at        DateTime?              @db.Timestamptz(6)
+  first_seen_at        DateTime               @default(now()) @db.Timestamptz(6)
+  last_seen_at         DateTime               @default(now()) @db.Timestamptz(6)
+  kk_price_comparisons kk_price_comparisons[]
+  kk_products          kk_products            @relation(fields: [product_id], references: [id], onUpdate: NoAction)
+  stores               stores                 @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([store_id, id])
+  @@unique([store_id, kk_offer_ref])
+  @@unique([store_id, product_id])
+  @@index([product_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model kk_store_settings {
+  store_id          String   @id @db.Uuid
+  store_slug        String   @unique
+  seller_id         Int?     @unique
+  easy_adjust_cents Int      @default(10)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @db.Timestamptz(6)
+  stores            stores   @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model store_credentials {
+  store_id    String   @db.Uuid
+  provider    String
+  ciphertext  Bytes
+  nonce       Bytes
+  key_version Int      @db.SmallInt
+  last_four   String
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime @default(now()) @db.Timestamptz(6)
+  stores      stores   @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([store_id, provider])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model store_memberships {
+  user_id    String   @db.Uuid
+  store_id   String   @db.Uuid
+  role       String
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  stores     stores   @relation(fields: [store_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users      users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, store_id])
+  @@index([store_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model stores {
+  id                String              @id @db.Uuid
+  slug              String              @unique
+  name              String
+  brand_name        String              @default("Pharma Hub")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  api_tokens        api_tokens[]
+  audit_events      audit_events[]
+  job_runs          job_runs[]
+  kk_store_offers   kk_store_offers[]
+  kk_store_settings kk_store_settings?
+  store_credentials store_credentials[]
+  store_memberships store_memberships[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model user_sessions {
+  id                  String   @id @db.Uuid
+  user_id             String   @db.Uuid
+  session_hash        Bytes    @unique
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  last_seen_at        DateTime @default(now()) @db.Timestamptz(6)
+  idle_expires_at     DateTime @db.Timestamptz(6)
+  absolute_expires_at DateTime @db.Timestamptz(6)
+  ip                  String?  @db.Inet
+  user_agent          String?
+  users               users    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([absolute_expires_at])
+  @@index([user_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model users {
+  id                String              @id @db.Uuid
+  email             String              @unique
+  google_sub        String?             @unique
+  display_name      String?
+  platform_role     String              @default("none")
+  status            String              @default("active")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  last_login_at     DateTime?           @db.Timestamptz(6)
+  audit_events      audit_events[]
+  store_memberships store_memberships[]
+  user_sessions     user_sessions[]
+}

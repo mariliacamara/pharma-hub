@@ -10,7 +10,7 @@ import stylistic from '@stylistic/eslint-plugin'
 import jest from 'eslint-plugin-jest'
 
 export default defineConfig([
-  globalIgnores(['node_modules', 'dist', 'coverage']),
+  globalIgnores(['node_modules', 'dist', 'coverage', 'src/generated']),
   js.configs.recommended,
   ts.configs.recommended,
   {

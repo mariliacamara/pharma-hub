@@ -1,0 +1,24 @@
+# Local PostgreSQL for development and integration tests.
+#   docker compose up -d db
+# The owner role below is a superuser inside the container. It is used only to run
+# migrations; the application connects as pharma_hub_app (created by db/dev-init.sql).
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pharma_hub_owner
+      POSTGRES_PASSWORD: owner_dev_password
+      POSTGRES_DB: pharma_hub
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./db/dev-init.sql:/docker-entrypoint-initdb.d/01-roles.sql:ro
+      - pharma_hub_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pharma_hub_owner -d pharma_hub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pharma_hub_data:

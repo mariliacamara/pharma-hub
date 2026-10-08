@@ -15,13 +15,16 @@
       "legacyDecorator": true
     },
     "paths": {
-      "#/*": ["./src/*"]
+      "#/*": [
+        "./src/*"
+      ]
     }
   },
   "module": {
     "type": "es6",
     "strict": true,
-    "importInterop": "swc"
+    "importInterop": "swc",
+    "resolveFully": true
   },
   "sourceMaps": true
 }
