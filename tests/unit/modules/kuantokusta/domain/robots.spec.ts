@@ -1,9 +1,9 @@
 import { describe, it, expect } from '@jest/globals'
 import { readFileSync } from 'node:fs'
-import { crawlDelaySeconds, isPathAllowed, parseRobots } from '#/kuantokusta/domain/robots'
+import { crawlDelaySeconds, isPathAllowed, parseRobots } from '#/modules/kuantokusta/domain/robots'
 
 const kuantokusta = parseRobots(
-  readFileSync(new URL('../../../fixtures/robots-kuantokusta.txt', import.meta.url), 'utf8')
+  readFileSync(new URL('../../../../fixtures/robots-kuantokusta.txt', import.meta.url), 'utf8')
 )
 const CLIENT = 'PharmaHubPriceReport'
 

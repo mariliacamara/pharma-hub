@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals'
-import { eurosToCents } from '#/kuantokusta/domain/money'
+import { eurosToCents } from '#/modules/kuantokusta/domain/money'
 
 describe('eurosToCents', () => {
   it.each([

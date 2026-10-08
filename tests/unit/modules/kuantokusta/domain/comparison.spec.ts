@@ -4,8 +4,8 @@ import {
   differencePercent,
   isEasyAdjust,
   type StoreIdentity
-} from '#/kuantokusta/domain/comparison'
-import type { PageOffer } from '#/kuantokusta/domain/page-offers'
+} from '#/modules/kuantokusta/domain/comparison'
+import type { PageOffer } from '#/modules/kuantokusta/domain/page-offers'
 
 const zincomed: StoreIdentity = { storeSlug: 'zincomed', sellerId: null }
 

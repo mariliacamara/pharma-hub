@@ -18,7 +18,7 @@ export default defineConfig({
   // The pure rules of an integration are where a silent mistake costs money,
   // so they carry the strict threshold.
   coverageThreshold: {
-    './src/kuantokusta/domain/': {
+    './src/modules/kuantokusta/domain/': {
       branches: 90,
       functions: 100,
       lines: 100,

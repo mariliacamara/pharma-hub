@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals'
-import { parseProductPage, type PageOffer } from '#/kuantokusta/domain/page-offers'
+import { parseProductPage, type PageOffer } from '#/modules/kuantokusta/domain/page-offers'
 
 /**
  * Builds a page with the structure observed on KuantoKusta on 2026-10-08. The offer

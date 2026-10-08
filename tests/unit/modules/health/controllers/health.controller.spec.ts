@@ -1,7 +1,7 @@
 import { describe, beforeAll, it, expect } from '@jest/globals'
 import { Logger, ServiceUnavailableException } from '@nestjs/common'
 
-import { HealthController } from '#/core/health/health.controller'
+import { HealthController } from '#/modules/health/controllers/health.controller'
 import type { PrismaService } from '#/infra/database/prisma.service'
 
 function controllerWith(queryRaw: () => Promise<unknown>): HealthController {
