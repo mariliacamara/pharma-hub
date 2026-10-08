@@ -1,31 +1,65 @@
-# This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
-
-name: Node.js CI
+name: CI
 
 on:
   push:
     branches:
       - main
+  pull_request:
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-
+  check:
+    name: Lint, types, unit tests, build
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        node-version: [24.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:ci
+      - run: npm run build
+
+  integration:
+    name: Integration tests (PostgreSQL)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pharma_hub_owner
+          POSTGRES_PASSWORD: owner_ci_password
+          POSTGRES_DB: pharma_hub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pharma_hub_owner -d pharma_hub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # Throwaway database that exists only for this job.
+      DATABASE_URL: postgresql://pharma_hub_app:app_ci_password@localhost:5432/pharma_hub
+      DATABASE_MIGRATION_URL: postgresql://pharma_hub_owner:owner_ci_password@localhost:5432/pharma_hub
 
     steps:
-    - uses: actions/checkout@v7
-    - name: Use Node.js 24.x
-      uses: actions/setup-node@v7
-      with:
-        node-version: ${{ matrix.node-version }}
-        cache: 'npm'
-    - run: npm ci
-    - run: npm run test:ci
-    - run: npm run build --if-present
-
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          cache: npm
+      - run: npm ci
+      - name: Create the application role
+        run: psql "$DATABASE_MIGRATION_URL" -v ON_ERROR_STOP=1 -v app_password=app_ci_password -f db/roles.sql
+      - run: npm run db:migrate
+      - run: npm run db:generate
+      - run: npm run test:int

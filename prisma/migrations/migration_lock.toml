@@ -1,0 +1,2 @@
+# Do not edit. Tells Prisma Migrate which database the migrations were written for.
+provider = "postgresql"

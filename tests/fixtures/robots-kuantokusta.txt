@@ -1,0 +1,56 @@
+# File robots.txt
+# Copy of https://www.kuantokusta.pt/robots.txt as served on 2026-10-08 (banned-agent
+# list shortened). Used as a test fixture; the collector always reads the live file.
+
+User-agent: *
+Disallow: /*/ajax*
+Disallow: /cp/*
+Disallow: /api/*
+Disallow: /utilizador/*
+Disallow: /conta/*
+Disallow: /carrinho*
+Disallow: /checkout*
+Disallow: /melhores-precos*
+Disallow: /campanhas*
+Disallow: /descontos-black-friday*
+Disallow: /search*
+Disallow: /autenticacao*
+Disallow: /public/teste*
+Disallow: /guest*
+Disallow: /marca/*
+Disallow: /mktapp/*
+Disallow: /9N5Ebjj3/*
+Disallow: /dir/*
+Disallow: /precos*
+Disallow: /mcc-static/*
+Disallow: /x/*
+Disallow: /manifest.json
+Disallow: /*?_pxhc=*
+Disallow: /servicos_kk.php?*
+Disallow: /clique_premium.php?*
+Disallow: /*-$
+Disallow: /product*
+Disallow: /follow*
+Disallow: /*price=
+Disallow: /*sort=
+Disallow: /*pag=
+Disallow: /*areas=
+Disallow: /*firstLetter=
+
+
+User-agent: AdsBot-Google
+Disallow: /melhores-precos*
+Disallow: /p/*/*bravecto*
+Disallow: /c/1538/*
+
+User-agent: AhrefsBot
+User-agent: Amazonbot
+User-agent: DOC
+User-agent: Fetch
+User-agent: linko
+User-agent: SemrushBot
+User-agent: Zao
+Disallow: /
+
+# SITEMAP FILES
+Sitemap: https://www.kuantokusta.pt/sitemap.xml

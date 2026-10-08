@@ -12,3 +12,11 @@ coverage
 
 .env*
 !.env.example
+
+src/generated
+
+.git
+
+docs
+
+tests
