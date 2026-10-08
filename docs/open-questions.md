@@ -34,7 +34,7 @@ record the outcome in `decisions/` if it was a decision.
 | Time zone of the API's `updatedAt` | The value has no offset. It is read as Portugal time by decision 0012; this was not confirmed with KuantoKusta |
 | Linking by store URL (`url_to_postid`) | Proposed as the third key; only name matching was tested |
 | `docker-compose.yml` and `Dockerfile` | Written but not run: the build environment had no running Docker. The same steps were verified by hand: a PostgreSQL 16 started directly, and the Dockerfile's commands run in order in an empty folder, ending with the service starting from the pruned output |
-| `.github/workflows/ci.yml` | Not run yet: the repository had no commits. The integration job (PostgreSQL service, role creation with `psql`) is the part most likely to need a fix on its first run |
+| Advisories in the Prisma command line's dependencies | `npm audit` reports high-severity advisories in `mysql2` and `deepmerge-ts`, which come with `prisma` 7.10.0, the newest 7.x release. The service does not use MySQL, and the only fix npm offers is a downgrade to Prisma 6. Whether they matter here was not analysed further; check again when Prisma publishes a newer release |
 | Type-aware lint rules | The base uses the `recommended` rules of `typescript-eslint`, which do not use type information. A forgotten `await` (`no-floating-promises`) is therefore not reported. Enabling the type-checked rule set is a small change, not made yet |
 | The page parser against a saved real page | The parser is tested with pages built to the observed structure. No real page was kept as a fixture |
 | The Seller API sandbox | Not tested |
