@@ -24,3 +24,7 @@ for (const [name, value] of Object.entries(fromFile)) {
 
 process.env.NODE_ENV = 'test'
 process.env.DATABASE_URL ??= 'postgresql://unit:unit@localhost:5432/unit'
+// A key for tests only. Thirty-two bytes that are obviously not random.
+process.env.CREDENTIALS_MASTER_KEY ??= `1:${Buffer.from(
+  'pharma-hub-test-master-key-00001'
+).toString('base64')}`

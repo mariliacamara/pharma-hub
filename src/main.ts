@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core'
-import { ConsoleLogger, StandardSchemaValidationPipe } from '@nestjs/common'
+import { ConsoleLogger } from '@nestjs/common'
 import { apiReference } from '@scalar/nestjs-api-reference'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 
@@ -22,8 +22,6 @@ const app = await NestFactory.create(AppModule, {
 // when the host stops or redeploys the service.
 app.enableShutdownHooks()
 
-app.useGlobalPipes(new StandardSchemaValidationPipe())
-
 // The API reference describes every route. It is served in development only,
 // so the public address does not hand a map of the API to strangers.
 if (!production) {
@@ -34,6 +32,11 @@ if (!production) {
     )
     .setVersion('0.1.0')
     .setOpenAPIVersion('3.1.1')
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      description: 'A plugin token, issued per store'
+    })
     .build()
 
   const document = SwaggerModule.createDocument(app, config)

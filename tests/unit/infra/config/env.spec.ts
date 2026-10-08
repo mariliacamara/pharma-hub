@@ -1,9 +1,16 @@
+import { randomBytes } from 'node:crypto'
+
 import { describe, it, expect } from '@jest/globals'
 
 import { EnvError, parseEnv } from '#/infra/config/env'
 
+const keyOf = (version: number, bytes = randomBytes(32)) =>
+  `${version}:${bytes.toString('base64')}`
+
+const masterBytes = randomBytes(32)
 const valid = {
-  DATABASE_URL: 'postgresql://app:secret@localhost:5432/pharma_hub'
+  DATABASE_URL: 'postgresql://app:secret@localhost:5432/pharma_hub',
+  CREDENTIALS_MASTER_KEY: keyOf(1, masterBytes)
 }
 
 function problemsOf(source: Record<string, string | undefined>): string[] {
@@ -19,38 +26,44 @@ function problemsOf(source: Record<string, string | undefined>): string[] {
 describe('parseEnv', () => {
   it('applies defaults for optional variables', () => {
     expect(parseEnv(valid)).toEqual({
-      NODE_ENV: 'development',
+      NODE_ENV: 'production',
       PORT: 7000,
-      DATABASE_URL: valid.DATABASE_URL
+      DATABASE_URL: valid.DATABASE_URL,
+      CREDENTIALS_MASTER_KEY: { version: 1, key: masterBytes },
+      CREDENTIALS_PREVIOUS_KEYS: [],
+      KK_SELLER_API_BASE_URL: 'https://seller.kuantokusta.pt/api'
     })
   })
 
   it('reads explicit values', () => {
-    const env = parseEnv({ ...valid, PORT: '8080', NODE_ENV: 'production' })
+    const env = parseEnv({ ...valid, PORT: '8080', NODE_ENV: 'development' })
 
     expect(env.PORT).toBe(8080)
-    expect(env.NODE_ENV).toBe('production')
+    expect(env.NODE_ENV).toBe('development')
   })
 
   it('accepts the short postgres:// scheme', () => {
     const url = 'postgres://app:secret@localhost:5432/pharma_hub'
 
-    expect(parseEnv({ DATABASE_URL: url }).DATABASE_URL).toBe(url)
+    expect(parseEnv({ ...valid, DATABASE_URL: url }).DATABASE_URL).toBe(url)
   })
 
   it('reports every problem at once, naming the variables', () => {
     const problems = problemsOf({ PORT: 'abc', NODE_ENV: 'staging' })
 
-    expect(problems).toHaveLength(3)
     expect(problems.map((problem) => problem.split(':')[0]).sort()).toEqual([
+      'CREDENTIALS_MASTER_KEY',
       'DATABASE_URL',
       'NODE_ENV',
       'PORT'
     ])
   })
 
-  it('says that a missing DATABASE_URL is required', () => {
-    expect(problemsOf({})).toEqual(['DATABASE_URL: is required'])
+  it('says that the required variables are required', () => {
+    expect(problemsOf({}).sort()).toEqual([
+      'CREDENTIALS_MASTER_KEY: is required',
+      'DATABASE_URL: is required'
+    ])
   })
 
   it.each(['0', '70000', '3000.5', '-1', '30 00', ''])(
@@ -65,7 +78,7 @@ describe('parseEnv', () => {
     'hunter2',
     'https://user:hunter2@example.com'
   ])('rejects DATABASE_URL=%s without echoing it', (secret) => {
-    const problems = problemsOf({ DATABASE_URL: secret })
+    const problems = problemsOf({ ...valid, DATABASE_URL: secret })
 
     expect(problems).toEqual([
       'DATABASE_URL: must be a postgresql:// connection string'
@@ -82,5 +95,141 @@ describe('parseEnv', () => {
 
     expect(problems).toHaveLength(2)
     expect(problems.join(' ')).not.toContain('hunter2')
+  })
+
+  describe('CREDENTIALS_MASTER_KEY', () => {
+    it.each([
+      ['no version', randomBytes(32).toString('base64')],
+      ['version zero', keyOf(0)],
+      ['a version that is not a number', `v1:${randomBytes(32).toString('base64')}`],
+      ['a key of 16 bytes', keyOf(1, randomBytes(16))],
+      ['a key of 33 bytes', keyOf(1, randomBytes(33))],
+      ['a key in hexadecimal', `1:${randomBytes(32).toString('hex')}`],
+      ['a key of one repeated byte', keyOf(1, Buffer.alloc(32, 0))],
+      ['the placeholder text', '1:change-me'],
+      ['an empty value', '']
+    ])('rejects %s, without echoing the value', (_case, value) => {
+      const problems = problemsOf({ ...valid, CREDENTIALS_MASTER_KEY: value })
+
+      expect(problems).toEqual([
+        'CREDENTIALS_MASTER_KEY: must be '
+        + '"<version>:<base64 of 32 random bytes>"'
+      ])
+      // A long enough piece of the value to be recognisable, when there is one.
+      expect(problems.join(' ')).not.toContain(value.slice(2, 14) || '\u0000')
+    })
+
+    it('refuses the example key in production, and only there', () => {
+      const example = keyOf(1, Buffer.from('local-development-only-not-a-key'))
+      const source = { ...valid, CREDENTIALS_MASTER_KEY: example }
+
+      expect(parseEnv({ ...source, NODE_ENV: 'development' })).toBeDefined()
+      expect(problemsOf({ ...source, NODE_ENV: 'production' })).toEqual([
+        'CREDENTIALS_MASTER_KEY: is the example key from .env.example; '
+        + 'generate one with: openssl rand -base64 32'
+      ])
+      // Also when it hides among the previous keys.
+      expect(
+        problemsOf({ ...valid, CREDENTIALS_PREVIOUS_KEYS: keyOf(9, Buffer.from('local-development-only-not-a-key')) })
+      ).toHaveLength(1)
+    })
+
+    it('tolerates spaces around the value', () => {
+      const env = parseEnv({
+        ...valid,
+        CREDENTIALS_MASTER_KEY: ` ${valid.CREDENTIALS_MASTER_KEY}\n`
+      })
+
+      expect(env.CREDENTIALS_MASTER_KEY.key.equals(masterBytes)).toBe(true)
+    })
+  })
+
+  describe('CREDENTIALS_PREVIOUS_KEYS', () => {
+    it('reads a list of older keys', () => {
+      const env = parseEnv({
+        ...valid,
+        CREDENTIALS_MASTER_KEY: keyOf(3),
+        CREDENTIALS_PREVIOUS_KEYS: `${keyOf(1)}, ${keyOf(2)}`
+      })
+
+      expect(env.CREDENTIALS_PREVIOUS_KEYS.map((key) => key.version))
+        .toEqual([1, 2])
+    })
+
+    it('rejects a malformed entry', () => {
+      expect(
+        problemsOf({ ...valid, CREDENTIALS_PREVIOUS_KEYS: `${keyOf(2)},oops` })
+      ).toEqual([
+        'CREDENTIALS_PREVIOUS_KEYS: each entry must be '
+        + '"<version>:<base64 of 32 random bytes>"'
+      ])
+    })
+
+    it.each([
+      ['the version of the active key', keyOf(1)],
+      ['the same version twice', `${keyOf(2)},${keyOf(2)}`]
+    ])('rejects %s', (_case, previous) => {
+      expect(
+        problemsOf({ ...valid, CREDENTIALS_PREVIOUS_KEYS: previous })
+      ).toEqual([
+        'CREDENTIALS_PREVIOUS_KEYS: every key needs its own version number'
+      ])
+    })
+  })
+
+  describe('KK_SELLER_API_BASE_URL', () => {
+    it('accepts the sandbox', () => {
+      const url = 'https://seller-sandbox.kuantokusta.pt/api'
+
+      expect(
+        parseEnv({ ...valid, KK_SELLER_API_BASE_URL: url }).KK_SELLER_API_BASE_URL
+      ).toBe(url)
+    })
+
+    it('accepts plain HTTP for a local fake, outside production only', () => {
+      const local = { ...valid, KK_SELLER_API_BASE_URL: 'http://127.0.0.1:9/api' }
+
+      expect(parseEnv({ ...local, NODE_ENV: 'test' }).KK_SELLER_API_BASE_URL)
+        .toBe('http://127.0.0.1:9/api')
+      expect(problemsOf({ ...local, NODE_ENV: 'production' })).toEqual([
+        'KK_SELLER_API_BASE_URL: must use https',
+        'KK_SELLER_API_BASE_URL: must be an address of kuantokusta.pt'
+      ])
+      // Leaving NODE_ENV out is the same as production.
+      expect(problemsOf(local)).toHaveLength(2)
+    })
+
+    it.each([
+      'https://seller.kuantokusta.pt.evil.example/api',
+      'https://evil.example/api',
+      'https://notkuantokusta.pt/api',
+      'https://seller.kuantokusta.pt@evil.example/api'
+    ])('in production, only sends the key to kuantokusta.pt, not %s', (url) => {
+      const problems = problemsOf({
+        ...valid,
+        NODE_ENV: 'production',
+        KK_SELLER_API_BASE_URL: url
+      })
+
+      expect(problems).toContain(
+        'KK_SELLER_API_BASE_URL: must be an address of kuantokusta.pt'
+      )
+    })
+
+    it.each([
+      ['plain HTTP to a real host', 'http://seller.kuantokusta.pt/api', 'must use https'],
+      ['another scheme', 'ftp://seller.kuantokusta.pt/api', 'must use https'],
+      ['something that is not a URL', 'seller.kuantokusta.pt', 'must be a URL'],
+      ['credentials in the URL', 'https://user:pw@seller.kuantokusta.pt/api', 'must not carry credentials or a query string'],
+      ['a query string', 'https://seller.kuantokusta.pt/api?key=1', 'must not carry credentials or a query string']
+    ])('rejects %s', (_case, url, rule) => {
+      expect(
+        problemsOf({
+          ...valid,
+          NODE_ENV: 'development',
+          KK_SELLER_API_BASE_URL: url
+        })
+      ).toEqual([`KK_SELLER_API_BASE_URL: ${rule}`])
+    })
   })
 })

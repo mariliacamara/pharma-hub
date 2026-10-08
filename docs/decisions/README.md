@@ -37,3 +37,7 @@ Template:
 | [0016](0016-refuse-to-start-with-a-role-that-bypasses-rls.md) | The service refuses to start with a database role that bypasses Row Level Security |
 | [0017](0017-toolchain-versions.md) | NestJS 12 defaults, Prisma pinned to 7, npm workaround (partly superseded by 0018) |
 | [0018](0018-build-on-the-boilerplate-nestjs-swc.md) | Build on the `boilerplate-nestjs-swc` base, with six corrections |
+| [0019](0019-modules-live-under-src-modules.md) | Each topic is a folder under `src/modules` |
+| [0020](0020-operator-commands-until-the-admin-api.md) | Operator commands, until the admin API exists |
+| [0021](0021-database-sessions-run-in-utc.md) | Every database session runs in UTC |
+| [0022](0022-routes-are-closed-unless-marked-public.md) | Every route is closed unless it is marked public |
