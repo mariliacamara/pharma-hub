@@ -1,7 +1,8 @@
 # Architecture
 
-Status: the database, the store isolation and the KuantoKusta rules are built; the flows
-below are designed and not built yet. Last updated 2026-10-08.
+Status: the database, the store isolation, plugin tokens, encrypted credentials and the
+copy of a store's offers are built. The price collection, the report routes and the
+admin API are designed and not built yet. Last updated 2026-10-08.
 
 ## Shape
 
@@ -59,19 +60,42 @@ Roles of a person in a store, each including the previous:
 The platform admin role is separate: it creates stores and manages users. It does not by
 itself give access to a store's data; that always comes from a membership.
 
-Both use the same services underneath. The admin API is part of the core from the start,
-because creating a store and issuing its token depend on it; the panel UI can come later
-and, until then, the same routes are used from the command line.
+Both use the same services underneath. Creating a store and issuing its token belong to
+the admin API. Until that exists, with its sign-in, they are done with operator commands
+that run inside the service and call the same services (decision 0020).
 
 ## Flows
 
-### Plugin request
+### Plugin request (built)
 
 1. The plugin sends its token in the `Authorization` header.
 2. The hub hashes the token, finds it in `api_tokens`, and gets the `store_id` and scopes.
-3. The request runs inside that store (see tenant isolation below).
+3. The route's required scopes are checked against the token's.
+4. The request runs inside that store (see tenant isolation below).
 
-The plugin never states which store it is. The token does.
+The plugin never states which store it is. The token does. Every route is closed unless
+it is marked public, so a route cannot be exposed by forgetting the check (decision 0022).
+
+### Setting the KuantoKusta key (built)
+
+1. The plugin (or an operator) sends the key once.
+2. The hub checks its shape, then asks KuantoKusta for a single offer with it.
+3. Only a key KuantoKusta accepted is encrypted and stored. A refused key, or one that
+   could not be checked because KuantoKusta was unreachable, is not stored, and the
+   previous key stays.
+
+### Copy of the store's offers (built)
+
+1. The hub decrypts the store's key and reads every page of `GET /v2/kms/offers`. No
+   database connection is held while it waits for KuantoKusta.
+2. Each item is checked field by field; an unusable one is skipped with a reason.
+3. One transaction writes the result: new offers inserted, known ones updated, and the
+   listed offers that were missing from the answer marked as delisted.
+4. The same answer leads to the same rows, so running it again is safe. Two runs for the
+   same store do not interleave.
+
+Today this runs from an operator command. In the next step it becomes the first part of
+the scheduled collection below.
 
 ### Scheduled collection (KuantoKusta)
 
@@ -107,6 +131,8 @@ Tenant = store. Enforced in three places:
    the store filter returns zero rows. In code, the setting is applied in one place only:
    `PrismaService.withStore(storeId, work)`. `tests/integration/tenant-isolation.int.spec.ts` proves the
    property against a real PostgreSQL, and fails when the policies are switched off.
+   `tests/integration/plugin-api.int.spec.ts` proves it again over HTTP, with two stores
+   and two tokens.
 3. **Composite foreign keys.** A comparison can only reference a run and an offer of its
    own store.
 
@@ -115,7 +141,13 @@ admin picks a store, the hub checks membership, and the query runs inside that s
 
 Shared tables without RLS, on purpose: `stores` and `api_tokens` (the token lookup happens
 before the store is known), `kk_products` and `kk_page_snapshots` (public data, shared so
-one page reading serves every store that sells the product).
+one page reading serves every store that sells the product). Code that touches
+`api_tokens` for anything other than the lookup filters by store itself.
+
+`kk_products` is written by every store's copy of offers: the last one to write sets the
+product's name and the slug in its URL. The host and the product id cannot be changed
+that way (see "The product page URL" in `security.md`), and the name is information
+only. It must not be shown to a store as if that store had written it.
 
 ## Data layers (KuantoKusta)
 

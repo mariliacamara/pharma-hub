@@ -38,6 +38,24 @@ robots.txt below), which is why the Seller API is what links a store product to 
   The response is a bare array with no total; read until a page comes back short.
 - The API also has write endpoints (offer price and stock, order approve/send/cancel).
   Version 1 must not call them.
+- A wrong key is answered with `401` and the body `{"error":{"code":"KMS0000"}}`
+  (observed on 2026-10-08). The client treats a 401 or 403 as "key refused" only when the
+  body has that format; any other 401 or 403 is a firewall or a proxy, not the API.
+
+### How the client behaves
+
+| Situation | What the client does |
+|---|---|
+| Normal | Reads page 1, 2, 3... of 100 until a page comes back short. Stays one below each published rate limit |
+| `429` | Waits what `Retry-After` says (30 s if it says nothing, 60 s at most), up to 3 tries per page |
+| `5xx`, timeout (15 s), dropped connection | Tries again after 0.5-1 s, then 1-2 s; gives up after 3 tries |
+| `401` / `403` in the API's error format | Stops: the key was refused |
+| A redirect | Refused. The key is never sent to another address |
+| Not JSON, not a list, larger than 5 MB a page or 50 MB in all, the same page twice, more than 300 pages | Stops: the answer is not what this client understands |
+| The whole list takes more than 15 minutes | Stops |
+
+It never returns part of a list. A list that is not complete is not used at all, because
+missing offers would look like offers the store removed.
 
 ### The real response differs from the spec
 
@@ -63,6 +81,59 @@ In a 20-page sample it agreed with "the store has the lowest price on the page" 
 Counterexample: the API marked an offer as top box with the store at 59.04 EUR while
 another store sold the same product at 52.99 EUR. The module computes the position from
 the page and treats `isTopBox` as information only.
+
+## Copying the store's offers into the hub
+
+Built in step 1. `modules/kuantokusta/domain/seller-offer.ts` reads each item;
+`offers-sync.service.ts` writes the result.
+
+### Reading an item
+
+Third-party data, so every field is checked. An item that cannot be used is skipped and
+counted by reason; the others are still stored.
+
+| Reason | The item |
+|---|---|
+| `missing_offer_ref` | has no `productId` |
+| `bad_product_url` | has a `productUrl` that is not exactly a KuantoKusta product page (`security.md`) |
+| `missing_name` | has neither `productName` nor `productNameKK` |
+| `bad_store_url` | has a `url` that is not an http(s) address |
+| `bad_price` | has a price that is not a number between 0 and 1,000,000 |
+| `bad_stock` | has a stock that is not a whole number of 0 or more |
+| `duplicate_in_response` | repeats the reference or the product of an earlier item |
+| `conflicting_identity` | matches two different stored offers at once (see below) |
+| `not_an_object` | is not an object at all |
+
+If items came back and none could be read, nothing is stored: the format changed.
+
+Missing `sku`, `ean` or `updatedAt` are not errors. The result reports how many offers
+have no SKU and no EAN; a sudden jump means a field changed type or name.
+
+### Recognising an offer from one day to the next
+
+A stored offer has two identities, both unique per store: the reference (`productId`)
+and the product (the id in `productUrl`). KuantoKusta can change either: an offer moved
+to the right product page keeps its reference, an offer created again keeps its product.
+A match on one of them is enough; the row then takes the new value of the other. An item
+that matches two different rows is left alone and reported.
+
+### Offers that disappear
+
+A listed offer that is missing from the answer is marked `delisted`. It is kept, with
+its history, and becomes `listed` again if it comes back. Two safeguards:
+
+- **Something was skipped:** nothing is delisted that time. The missing offer may be the
+  one whose item could not be read.
+- **Too many at once:** if more than 10 offers, and more than 20% of the listed ones,
+  are missing, nothing is delisted. An empty or cut-short answer looks exactly like a
+  catalogue that vanished. The next whole answer puts things right by itself; if the
+  store really removed them, an operator confirms with `--allow-mass-delisting`.
+
+Not verified: whether KuantoKusta ever returns a page with fewer than 100 items in the
+middle of a list (the client would take it for the last page), and whether reading
+pages while KuantoKusta re-imports the catalogue can make an offer fall between two
+pages. The second safeguard covers the large cases; the daily collection should run
+well after the import.
 
 ## Linking an offer to a WooCommerce product
 

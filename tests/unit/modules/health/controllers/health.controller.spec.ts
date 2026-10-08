@@ -1,8 +1,9 @@
 import { describe, beforeAll, it, expect } from '@jest/globals'
-import { Logger, ServiceUnavailableException } from '@nestjs/common'
+import { Logger } from '@nestjs/common'
 
-import { HealthController } from '#/modules/health/controllers/health.controller'
+import { ApiError } from '#/infra/http/api-error'
 import type { PrismaService } from '#/infra/database/prisma.service'
+import { HealthController } from '#/modules/health/controllers/health.controller'
 
 function controllerWith(queryRaw: () => Promise<unknown>): HealthController {
   return new HealthController({
@@ -36,9 +37,9 @@ describe('HealthController', () => {
     })
     const error = await controller.ready().catch((e: unknown) => e)
 
-    expect(error).toBeInstanceOf(ServiceUnavailableException)
-    expect(
-      JSON.stringify((error as ServiceUnavailableException).getResponse())
-    ).toBe('{"status":"unavailable"}')
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).getStatus()).toBe(503)
+    expect((error as ApiError).code).toBe('database_unavailable')
+    expect((error as ApiError).message).not.toContain('hunter2')
   })
 })

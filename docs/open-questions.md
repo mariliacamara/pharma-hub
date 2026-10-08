@@ -10,8 +10,11 @@ record the outcome in `decisions/` if it was a decision.
 | Job queue: backed by PostgreSQL or by Redis? | Not decided. At about 185 jobs a day per store a PostgreSQL-backed queue is enough and avoids running Redis |
 | Compare with or without shipping by default? | The report compares product prices and also stores totals with shipping. The client asked for prices; confirm |
 | "Easy adjust" threshold | Default is 10 cents, from the client's own example. Confirm it per store |
-| How do migrations run on deploy? | Proposed: a Railway pre-deploy command, `npx prisma migrate deploy`, with `DATABASE_MIGRATION_URL` available to that command. The image already carries the migrations. Not set up, since nothing is deployed |
-| At what time does the daily collection run? | It should be after KuantoKusta re-imports the store's catalogue; one offer showed 00:49. Not set yet |
+| At what time does the daily collection run? | It should be well after KuantoKusta re-imports the store's catalogue (one offer showed 00:49), because pages read during the import can miss an offer. Not set yet |
+| How does the scheduled worker keep one copy of the offers per store at a time? | Inside one process the copies do not interleave. An operator command and the service are two processes; `job_runs` already has the unique index for this and the worker should use it |
+| Limit on requests per token and per address | None yet. Needed before the API is used by more than the plugin |
+| Should a token issued from the command line default to every scope and no expiry? | It does, because that is what the plugin needs. The review suggested read-only and an expiry by default |
+| A command that re-encrypts every stored key after a master key rotation | Not built. Until then an old master key has to be kept (`operations.md`) |
 
 ## Needs an answer from someone else
 
@@ -33,11 +36,16 @@ record the outcome in `decisions/` if it was a decision.
 | Meaning of `isTopBox` and `importAuto` | Undocumented. Observed correlations are in `kuantokusta.md` |
 | Time zone of the API's `updatedAt` | The value has no offset. It is read as Portugal time by decision 0012; this was not confirmed with KuantoKusta |
 | Linking by store URL (`url_to_postid`) | Proposed as the third key; only name matching was tested |
-| `docker-compose.yml` and `Dockerfile` | Written but not run: the build environment had no running Docker. The same steps were verified by hand: a PostgreSQL 16 started directly, and the Dockerfile's commands run in order in an empty folder, ending with the service starting from the pruned output |
+| `docker-compose.yml` | Not run. The `Dockerfile` was built and run with Docker on 2026-10-08, including the migration and the operator commands inside the image, and it runs on Railway |
+| `railway ssh` and the Console tab, for the operator commands | Described in Railway's documentation; not tried |
+| Regenerating the database password on Railway | Not tried |
+| Does the Seller API ever return a short page in the middle of a list, or cap `maxResultsPerPage` below 100? | Not known. The client takes the first short page for the last one |
+| How the Seller API identifies the seller behind a key | The offers list does not say. Without it, a key cannot be tied to its store |
 | Advisories in the Prisma command line's dependencies | `npm audit` reports high-severity advisories in `mysql2` and `deepmerge-ts`, which come with `prisma` 7.10.0, the newest 7.x release. The service does not use MySQL, and the only fix npm offers is a downgrade to Prisma 6. Whether they matter here was not analysed further; check again when Prisma publishes a newer release |
 | Type-aware lint rules | The base uses the `recommended` rules of `typescript-eslint`, which do not use type information. A forgotten `await` (`no-floating-promises`) is therefore not reported. Enabling the type-checked rule set is a small change, not made yet |
 | The page parser against a saved real page | The parser is tested with pages built to the observed structure. No real page was kept as a fixture |
 | The Seller API sandbox | Not tested |
+| The real Seller API from the built client | Only a single request with an invalid key was made (it answered 401, as the client expects). The full copy was tested against a fake built from the real response's shape; the first real copy is still to be done, with Zincomed's key |
 | Whether the Railway plan offers a fixed outbound IP | Not checked. It matters if KuantoKusta agrees to allow a specific IP |
 | Whether one store can have two offers for the same KuantoKusta product | The schema forbids it, based on 347 offers with 347 distinct pages |
 

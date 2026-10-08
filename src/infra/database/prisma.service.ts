@@ -61,10 +61,29 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name)
 
   constructor(databaseUrl: string) {
+    // Written out rather than left to the driver's defaults, so the limits
+    // are a decision. Every request that touches a store's data holds one
+    // connection for the length of a short transaction.
+    const pool = {
+      connectionString: databaseUrl,
+      options: SESSION_OPTIONS,
+      max: 10,
+      // Without this a request waits for a free connection forever, and a
+      // full pool looks like a hung service instead of an error.
+      connectionTimeoutMillis: 10_000
+    }
+    // An idle connection that breaks (the database restarted, the network
+    // dropped) is replaced silently by the pool. Say so in the log.
+    const report = (error: Error) => {
+      Logger.warn(
+        `Database connection lost: ${error.message}`,
+        PrismaService.name
+      )
+    }
     super({
-      adapter: new PrismaPg({
-        connectionString: databaseUrl,
-        options: SESSION_OPTIONS
+      adapter: new PrismaPg(pool, {
+        onPoolError: report,
+        onConnectionError: report
       })
     })
   }
