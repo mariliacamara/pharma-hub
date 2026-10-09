@@ -20,8 +20,9 @@ const app = await NestFactory.create(AppModule, {
   logger: new ConsoleLogger({ json: production })
 })
 
-// Lets Nest run onModuleDestroy on SIGTERM, which closes the database pool
-// when the host stops or redeploys the service.
+// Lets Nest run the shutdown hooks on SIGTERM, when the host stops or
+// redeploys the service: the collection puts its run back in the queue,
+// then the database pool is closed.
 app.enableShutdownHooks()
 
 // The API reference describes every route. It is served in development only,

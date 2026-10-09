@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Injectable, Logger } from '@nestjs/common'
-import type { OnApplicationShutdown } from '@nestjs/common'
+import type { OnModuleDestroy } from '@nestjs/common'
 
 import { PrismaService } from '#/infra/database/prisma.service'
 
@@ -19,7 +19,7 @@ const CHECK_EVERY_MS = 60_000
 const SCHEDULER = { type: 'system', label: 'scheduler' } as const
 
 @Injectable()
-export class CollectionScheduler implements OnApplicationShutdown {
+export class CollectionScheduler implements OnModuleDestroy {
   private readonly logger = new Logger(CollectionScheduler.name)
   private readonly stopping = new AbortController()
   private loop: Promise<void> | null = null
@@ -41,7 +41,7 @@ export class CollectionScheduler implements OnApplicationShutdown {
     this.loop = this.watch(dailyAt)
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  async onModuleDestroy(): Promise<void> {
     this.stopping.abort()
     await this.loop
   }
@@ -55,17 +55,25 @@ export class CollectionScheduler implements OnApplicationShutdown {
 
     let requested = 0
     for (const { id } of stores) {
-      const last = await this.runs.lastScheduledAt(id)
-      if (!isDailyRunDue(now, dailyAt, last)) continue
-      // A store without a key has nothing to collect yet.
-      if (!(await this.credential.status(id)).configured) continue
+      try {
+        const last = await this.runs.lastScheduledAt(id)
+        if (!isDailyRunDue(now, dailyAt, last)) continue
+        // A store without a key has nothing to collect yet.
+        if (!(await this.credential.status(id)).configured) continue
 
-      const { created } = await this.runs.request(
-        id,
-        { trigger: 'schedule' },
-        SCHEDULER
-      )
-      if (created) requested++
+        const { created } = await this.runs.request(
+          id,
+          { trigger: 'schedule' },
+          SCHEDULER
+        )
+        if (created) requested++
+      } catch (error) {
+        // One store's problem must not cost the others their collection.
+        this.logger.error(
+          `Could not schedule the collection of store=${id}`,
+          error instanceof Error ? error.stack : String(error)
+        )
+      }
     }
     return requested
   }

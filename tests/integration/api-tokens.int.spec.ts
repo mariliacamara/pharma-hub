@@ -29,7 +29,7 @@ describe('plugin tokens', () => {
 
   afterAll(async () => {
     await deleteStores(prisma, [storeA, storeB])
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
   })
 
   const issue = (store: TestStore, extra = {}) =>

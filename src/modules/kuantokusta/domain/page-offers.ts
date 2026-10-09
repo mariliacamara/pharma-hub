@@ -32,11 +32,38 @@ export type PageParseResult
    */
     | { outcome: 'no_offer_list' }
 
-const NEXT_DATA = /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i
 const MAX_TEXT_LENGTH = 200
+// No store sells one item for this much. A larger number is a mistake or an
+// attempt to break the arithmetic further on, and the offer is left out.
+const MAX_PRICE_EUROS = 1_000_000
+// A real page lists a few dozen stores. A list far beyond that is not a
+// product page as the hub knows it.
+const MAX_OFFERS = 1_000
+
+/**
+ * The text inside <script id="__NEXT_DATA__">, found by plain searching.
+ *
+ * Not a regular expression on purpose: on a page built for it, one would
+ * take minutes, and the whole service shares one thread.
+ */
+function embeddedJson(html: string): string | undefined {
+  for (const marker of ['id="__NEXT_DATA__"', 'id=\'__NEXT_DATA__\'']) {
+    const at = html.indexOf(marker)
+    if (at === -1) continue
+    const tagStart = html.lastIndexOf('<', at)
+    if (!/^<script\s/i.test(html.slice(tagStart, tagStart + 8))) continue
+    const tagEnd = html.indexOf('>', at)
+    if (tagEnd === -1) continue
+    const close = html.indexOf('</script>', tagEnd)
+    const closeUpper = close === -1 ? html.indexOf('</SCRIPT>', tagEnd) : close
+    if (closeUpper === -1) continue
+    return html.slice(tagEnd + 1, closeUpper)
+  }
+  return undefined
+}
 
 export function parseProductPage(html: string): PageParseResult {
-  const embedded = NEXT_DATA.exec(html)?.[1]
+  const embedded = embeddedJson(html)
   if (embedded === undefined) return { outcome: 'no_offer_list' }
 
   let document: unknown
@@ -47,7 +74,9 @@ export function parseProductPage(html: string): PageParseResult {
   }
 
   const list = dig(document, ['props', 'pageProps', 'basePage', 'product', 'offers'])
-  if (!Array.isArray(list)) return { outcome: 'no_offer_list' }
+  if (!Array.isArray(list) || list.length > MAX_OFFERS) {
+    return { outcome: 'no_offer_list' }
+  }
 
   const offers: PageOffer[] = []
   for (const raw of list) {
@@ -62,7 +91,14 @@ function toPageOffer(raw: unknown): PageOffer | null {
   if (!isRecord(raw)) return null
 
   const price = raw.price
-  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null
+  if (
+    typeof price !== 'number'
+    || !Number.isFinite(price)
+    || price <= 0
+    || price > MAX_PRICE_EUROS
+  ) {
+    return null
+  }
 
   const storeName = text(raw.storeName)
   const storeSlug = text(raw.storeSlug)
@@ -77,7 +113,10 @@ function toPageOffer(raw: unknown): PageOffer | null {
     sellerId: Number.isSafeInteger(raw.sellerId) ? (raw.sellerId as number) : null,
     priceCents: eurosToCents(price),
     shippingCents:
-      typeof shipping === 'number' && Number.isFinite(shipping) && shipping >= 0
+      typeof shipping === 'number'
+      && Number.isFinite(shipping)
+      && shipping >= 0
+      && shipping <= MAX_PRICE_EUROS
         ? eurosToCents(shipping)
         : null,
     isHighlighted: raw.isHighlighted === true,

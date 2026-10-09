@@ -50,7 +50,9 @@ const USER_AGENT = 'PharmaHubPriceReport/1.0 (integration test)'
 // No pause between pages: the pause is tested on its own.
 const FAST: CollectionTimings = {
   pageIntervalMs: 0,
-  reuseReadingsForMs: 2 * 60 * 60_000
+  reuseReadingsForMs: 2 * 60 * 60_000,
+  blockCooldownMs: 30 * 60_000,
+  maxRunMs: 60 * 60_000
 }
 
 const steady = (): CollectionControl => ({
@@ -104,7 +106,7 @@ describe('KuantoKusta price collection', () => {
   })
 
   afterAll(async () => {
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
     await server.stop()
     await site.stop()
   })
@@ -473,6 +475,139 @@ describe('KuantoKusta price collection', () => {
       expect(site.pageRequests).toHaveLength(12)
     })
 
+    it('keeps every store away for a while after the website refused one', async () => {
+      catalogue(8)
+      for (let n = 1; n <= 8; n++) site.pageStatus(products.base + n, 403)
+      const first = await collect()
+
+      expect(first.run.errorCode).toBe('blocked_by_site')
+
+      // Another store, other products, a moment later.
+      const other = await newStore('other')
+      server.offers = Array.from({ length: 6 }, (_, i) =>
+        products.offer(100 + i, { price: euros(i) })
+      )
+      site.requests = []
+      const second = await collect(other)
+
+      expect(second.run).toMatchObject({
+        status: 'blocked',
+        errorCode: 'blocked_by_site',
+        itemsTotal: 6,
+        itemsOk: 0,
+        itemsFailed: 0
+      })
+      // Not one request, not even for robots.txt.
+      expect(site.requests).toEqual([])
+
+      // Once the wait is over, it tries again.
+      const later = newCollection({ ...FAST, blockCooldownMs: 0 })
+      await age(other, second.run.id, 120)
+      const third = await collect(other, steady(), later)
+
+      expect(third.run.errorCode).toBe('no_page_read')
+      expect(site.pageRequests).toHaveLength(6)
+    })
+
+    it('stops when page after page comes without the offers: the site changed', async () => {
+      catalogue(30)
+      for (let n = 6; n <= 30; n++) {
+        site.pageHtml(products.base + n, '<html><title>Produto</title></html>')
+      }
+
+      const { run } = await collect()
+
+      expect(run).toMatchObject({
+        status: 'failed',
+        errorCode: 'page_layout_changed',
+        itemsTotal: 30,
+        itemsOk: 5,
+        itemsFailed: 10
+      })
+      // Ten such pages in a row, and not one request more.
+      expect(site.pageRequests).toHaveLength(15)
+      // What was read before is still compared.
+      expect((await comparisons(store, run.id)).map((row) => row.outcome))
+        .toEqual([
+          ...Array.from({ length: 5 }, () => 'more_expensive'),
+          ...Array.from({ length: 10 }, () => 'no_data')
+        ])
+    })
+
+    it('stops when page after page fails: the site is having trouble', async () => {
+      catalogue(30)
+      for (let n = 6; n <= 30; n++) {
+        if (n % 2 === 0) site.pageStatus(products.base + n, 502)
+        else site.pageDrop(products.base + n)
+      }
+
+      const { run } = await collect()
+
+      expect(run).toMatchObject({
+        status: 'failed',
+        errorCode: 'site_unavailable',
+        itemsFailed: 10
+      })
+      expect(site.pageRequests).toHaveLength(15)
+    })
+
+    it('does not take pages that are gone for a site in trouble', async () => {
+      catalogue(20)
+      for (let n = 7; n <= 20; n++) site.pageStatus(products.base + n, 404)
+
+      const { run } = await collect()
+
+      expect(run).toMatchObject({
+        status: 'partial',
+        itemsOk: 6,
+        itemsFailed: 14
+      })
+      expect(site.pageRequests).toHaveLength(20)
+    })
+
+    it('fails, rather than "partial", when not one page could be used', async () => {
+      catalogue(6)
+      for (let n = 1; n <= 6; n++) site.pageStatus(products.base + n, 500)
+
+      const { run } = await collect()
+
+      expect(run).toMatchObject({
+        status: 'failed',
+        errorCode: 'no_page_read',
+        itemsOk: 0,
+        itemsFailed: 6
+      })
+    })
+
+    it('stops a collection that goes on for too long', async () => {
+      catalogue(8)
+      const slow = newCollection({ ...FAST, pageIntervalMs: 120, maxRunMs: 200 })
+
+      const { run } = await collect(store, steady(), slow)
+
+      expect(run).toMatchObject({ status: 'failed', errorCode: 'run_too_long' })
+      expect(site.pageRequests.length).toBeGreaterThanOrEqual(1)
+      expect(site.pageRequests.length).toBeLessThan(8)
+    })
+
+    it('does not reuse a reading made by another version of the parser', async () => {
+      catalogue(6)
+      await collect()
+      await prisma.kk_page_snapshots.updateMany({
+        where: {
+          kk_products: {
+            external_id: { gte: products.base, lt: products.base + 10_000 }
+          }
+        },
+        data: { parser_version: 999 }
+      })
+      site.requests = []
+
+      await collect()
+
+      expect(site.pageRequests).toHaveLength(6)
+    })
+
     it('does not read again, in a later run, a page it was refused', async () => {
       catalogue(6)
       site.pageStatus(products.base + 6, 403)
@@ -546,7 +681,9 @@ describe('KuantoKusta price collection', () => {
       [{ status: 403 }, 'blocked', 'robots_refused'],
       [{ status: 401 }, 'blocked', 'robots_refused'],
       [{ status: 500 }, 'failed', 'robots_unavailable'],
-      [{ status: 429 }, 'failed', 'robots_unavailable'],
+      [{ status: 429 }, 'blocked', 'robots_refused'],
+      [CHALLENGE_HTML, 'blocked', 'robots_refused'],
+      ['<html><body>Página inicial</body></html>', 'failed', 'robots_unavailable'],
       ['drop' as const, 'failed', 'robots_unavailable'],
       ['User-agent: *\nCrawl-delay: 600\n', 'failed', 'crawl_delay_too_long']
     ])(
@@ -763,9 +900,11 @@ describe('KuantoKusta price collection', () => {
       const twin = await newStore('twin')
       const { run } = await collect(twin)
 
+      // Reported as "not recognised": the caller is not told that the name
+      // belongs to another store of the hub.
       expect(run).toMatchObject({
         status: 'failed',
-        errorCode: 'store_identity_conflict'
+        errorCode: 'store_identity_unknown'
       })
       expect(await settings.get(twin.id)).toBeNull()
       expect(await comparisons(twin, run.id)).toEqual([])
@@ -932,8 +1071,9 @@ describe('KuantoKusta price collection', () => {
       })
     })
 
-    it('records a crash as a failed run instead of leaving it running', async () => {
+    it('tries again after a crash, and records the failure the third time', async () => {
       catalogue(6)
+      let crashes = 0
       const broken = new CollectionService(
         prisma,
         runs,
@@ -941,18 +1081,74 @@ describe('KuantoKusta price collection', () => {
         settings,
         {
           fetchRobots: async () => {
+            crashes++
             throw new Error('unexpected')
           }
         } as unknown as ProductPageClient,
         FAST
       )
+      const asked = await request()
 
-      const { end, run } = await collect(store, steady(), broken)
+      for (const attempt of [1, 2]) {
+        const claim = (await runs.claimNext()) as Claim
 
-      expect(end).toBe('finished')
-      expect(run).toMatchObject({
+        expect(await broken.execute(claim, steady())).toBe('crashed')
+        // Left as it was: without signs of life it is taken up again.
+        expect(await runs.get(store.id, asked.id)).toMatchObject({
+          status: 'running',
+          errorCode: null
+        })
+        expect(claim.attempt).toBe(attempt)
+
+        await age(store, asked.id, 10)
+        await runs.recoverAbandoned()
+      }
+
+      const last = (await runs.claimNext()) as Claim
+
+      expect(await broken.execute(last, steady())).toBe('finished')
+      expect(await runs.get(store.id, asked.id)).toMatchObject({
         status: 'failed',
         errorCode: 'internal_error'
+      })
+      expect(crashes).toBe(3)
+    })
+
+    it('finishes normally when the cause of a crash has passed', async () => {
+      catalogue(6)
+      let healthy = false
+      const flaky = new CollectionService(
+        prisma,
+        runs,
+        offersSync,
+        settings,
+        new Proxy(pages, {
+          get(target, property) {
+            if (property === 'fetchPage' && !healthy) {
+              return async () => {
+                throw new Error('the database went away')
+              }
+            }
+            const value: unknown = Reflect.get(target, property, target)
+            return typeof value === 'function' ? value.bind(target) : value
+          }
+        }),
+        FAST
+      )
+      const asked = await request()
+
+      expect(await flaky.execute((await runs.claimNext()) as Claim, steady()))
+        .toBe('crashed')
+
+      healthy = true
+      await age(store, asked.id, 10)
+      await runs.recoverAbandoned()
+
+      expect(await flaky.execute((await runs.claimNext()) as Claim, steady()))
+        .toBe('finished')
+      expect(await runs.get(store.id, asked.id)).toMatchObject({
+        status: 'succeeded',
+        itemsOk: 6
       })
     })
   })
@@ -1012,15 +1208,19 @@ describe('KuantoKusta price collection', () => {
       const first = await runs.claimNext()
 
       expect(first).toMatchObject({ storeId: second.id, runId: a.id })
-      // Nothing else starts while that one is running.
+      // Nothing else starts while that one is running, not even a run that
+      // has been waiting for longer than the running one.
+      await age(third, c.id, 30)
+
       expect(await runs.claimNext()).toBeNull()
+      expect(await runs.get(third.id, c.id)).toMatchObject({ status: 'queued' })
 
       await runs.finish(first as Claim, {
         status: 'failed',
         errorCode: 'internal_error'
       })
 
-      expect(await runs.claimNext()).toMatchObject({ runId: b.id })
+      expect(await runs.claimNext()).toMatchObject({ runId: c.id })
     })
 
     it('gives a waiting run to one worker when several reach for it', async () => {
@@ -1077,6 +1277,18 @@ describe('KuantoKusta price collection', () => {
       expect((await manual()).created).toBe(true)
     })
 
+    it('makes a person wait an hour after a failure that came from the website', async () => {
+      catalogue(6)
+      site.robots = { status: 503 }
+      const { run } = await collect()
+
+      expect(run).toMatchObject({
+        status: 'failed',
+        errorCode: 'robots_unavailable'
+      })
+      expect(await waitOf()).toBeGreaterThan(59 * 60)
+    })
+
     it('lets a person try again a minute after a failure', async () => {
       server.acceptedKey = 'another-key-entirely'
       const { run } = await collect()
@@ -1104,11 +1316,15 @@ describe('KuantoKusta price collection', () => {
     it('records who asked', async () => {
       const { run } = await runs.request(
         store.id,
-        { trigger: 'manual', requestedBy: `  ${'m'.repeat(200)}  ` },
+        {
+          trigger: 'manual',
+          requestedBy: `  maria\u001b[31m\r\nsilva ${'m'.repeat(200)}  `
+        },
         TEST_ACTOR
       )
 
-      expect(run.requestedBy).toBe('m'.repeat(120))
+      // One line of plain text, of bounded length.
+      expect(run.requestedBy).toBe(`maria [31m  silva ${'m'.repeat(102)}`)
       const events = await prisma.audit_events.findMany({
         where: { store_id: store.id, action: 'kk_run.requested' }
       })
@@ -1145,7 +1361,7 @@ describe('KuantoKusta price collection', () => {
       let stopped: Promise<void> | undefined
       let read = 0
       site.onPage = () => {
-        if (++read === 2) stopped = worker.onApplicationShutdown()
+        if (++read === 2) stopped = worker.onModuleDestroy()
       }
 
       worker.start()
@@ -1198,6 +1414,21 @@ describe('KuantoKusta price collection', () => {
 
       expect(await clock.tick('00:00', tomorrow)).toBe(1)
       expect(await scheduled(store)).toHaveLength(2)
+    })
+
+    it('does not let the problem of one store cost the others their collection', async () => {
+      catalogue(6)
+      const fine = await newStore('fine')
+      const clock = new CollectionScheduler(hub, runs, {
+        status: async (storeId: string) => {
+          if (storeId === store.id) throw new Error('unreadable')
+          return { configured: true }
+        }
+      } as unknown as KkCredentialService)
+
+      expect(await clock.tick('00:00')).toBe(1)
+      expect(await scheduled(store)).toHaveLength(0)
+      expect(await scheduled(fine)).toHaveLength(1)
     })
   })
 })

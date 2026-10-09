@@ -1,5 +1,5 @@
 import { Logger } from '@nestjs/common'
-import type { OnModuleDestroy, OnModuleInit } from '@nestjs/common'
+import type { OnApplicationShutdown, OnModuleInit } from '@nestjs/common'
 import { PrismaPg } from '@prisma/adapter-pg'
 
 import { PrismaClient } from '#/generated/prisma/client'
@@ -57,7 +57,7 @@ interface RoleCheckRow {
  */
 export class PrismaService
   extends PrismaClient
-  implements OnModuleInit, OnModuleDestroy {
+  implements OnModuleInit, OnApplicationShutdown {
   private readonly logger = new Logger(PrismaService.name)
 
   constructor(databaseUrl: string) {
@@ -70,7 +70,10 @@ export class PrismaService
       max: 10,
       // Without this a request waits for a free connection forever, and a
       // full pool looks like a hung service instead of an error.
-      connectionTimeoutMillis: 10_000
+      connectionTimeoutMillis: 10_000,
+      // Lets the operating system notice a connection whose other end went
+      // away without saying so, instead of waiting on it forever.
+      keepAlive: true
     }
     // An idle connection that breaks (the database restarted, the network
     // dropped) is replaced silently by the pool. Say so in the log.
@@ -96,7 +99,13 @@ export class PrismaService
     )
   }
 
-  async onModuleDestroy(): Promise<void> {
+  /**
+   * Closes the pool in the LAST phase of a shutdown. Whatever is still
+   * working when the service is asked to stop (a request being answered,
+   * the collection putting its run back in the queue) does so in the
+   * earlier phases and still needs the database.
+   */
+  async onApplicationShutdown(): Promise<void> {
     await this.$disconnect()
   }
 

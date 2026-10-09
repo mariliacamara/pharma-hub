@@ -36,7 +36,14 @@ const requestBody = z
   .strictObject({
     // Who pressed the button, as the plugin knows them: a WordPress login,
     // for example. Kept for the history; it grants nothing.
-    requestedBy: z.string().trim().min(1).max(120).optional()
+    requestedBy: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      // One line of text: it is shown later in a terminal and in the panel.
+      .regex(/^\P{Cc}+$/u, 'must not contain control characters')
+      .optional()
   })
   .default({})
 

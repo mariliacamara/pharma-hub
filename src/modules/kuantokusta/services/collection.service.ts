@@ -11,7 +11,10 @@ import { PARSER_VERSION } from '../domain/page-offers'
 import type { PageOffer } from '../domain/page-offers'
 import type { PageOutcome, PageReading } from '../domain/page-reading'
 import { guessStoreIdentity, learnSellerId } from '../domain/store-identity'
-import { CollectionRunsService } from './collection-runs.service'
+import {
+  CollectionRunsService,
+  MAX_ATTEMPTS
+} from './collection-runs.service'
 import type { Claim, RunProgress } from './collection-runs.service'
 import {
   InvalidKkSettingsError,
@@ -55,22 +58,55 @@ export interface CollectionTimings {
   pageIntervalMs: number
   /** A stored reading newer than this is used instead of reading again. */
   reuseReadingsForMs: number
+  /**
+   * After the website refused the hub, no store's collection goes back to it
+   * for this long.
+   */
+  blockCooldownMs: number
+  /** A collection still reading pages after this long is stopped. */
+  maxRunMs: number
 }
 
 export const DEFAULT_TIMINGS: CollectionTimings = {
   pageIntervalMs: 5_000,
-  reuseReadingsForMs: 2 * 60 * 60_000
+  reuseReadingsForMs: 2 * 60 * 60_000,
+  blockCooldownMs: 30 * 60_000,
+  // At one page every five seconds this is some four thousand pages.
+  maxRunMs: 6 * 60 * 60_000
 }
 
 /**
  * `lost`: the run stopped being this worker's while it worked (see Claim).
  * Nothing more was written for it.
+ * `crashed`: something unexpected went wrong. The run is left as it is, to
+ * be taken up again as an abandoned one.
  */
-export type CollectionEnd = 'finished' | 'requeued' | 'lost'
+export type CollectionEnd = 'finished' | 'requeued' | 'lost' | 'crashed'
+
+/** Why the reading of pages stopped before the last page. */
+type StopReason
+  = | 'blocked_by_site'
+    | 'robots_refused'
+    | 'robots_unavailable'
+    | 'crawl_delay_too_long'
+    | 'page_layout_changed'
+    | 'site_unavailable'
+    | 'run_too_long'
+
+/** The reasons that mean "the website said no", as opposed to "it failed". */
+const REFUSALS: readonly StopReason[] = ['blocked_by_site', 'robots_refused']
+
+type ReadingPhase
+  = | { interrupted: 'requeued' | 'lost' }
+    | { interrupted: null, stoppedBy: StopReason | null }
 
 // Insisting after this many refusals in a row only makes things worse for
 // the address the hub runs from, and brings no data.
 const MAX_CONSECUTIVE_BLOCKS = 3
+// This many pages in a row that came back unusable, without being refused,
+// mean the problem is not the page: the site changed its pages or is down.
+// Reading on would be hundreds of requests for nothing.
+const MAX_CONSECUTIVE_UNREADABLE = 10
 // A site asking for a longer pause than this between pages is, in effect,
 // asking not to be read. The run stops instead of taking a day.
 const MAX_CRAWL_DELAY_SECONDS = 120
@@ -109,11 +145,8 @@ export class CollectionService {
 
   /**
    * Runs a collection that the caller has already marked as running, and
-   * leaves it finished or back in the queue.
-   *
-   * It throws only when the database itself is away. The run then stays
-   * marked as running, without a sign of life, and is taken up again as an
-   * abandoned one.
+   * leaves it finished, back in the queue, or (after a crash) as it was, to
+   * be taken up again as an abandoned one.
    */
   async execute(
     claim: Claim,
@@ -128,9 +161,15 @@ export class CollectionService {
       return await this.run(claim, control)
     } catch (error) {
       this.logger.error(
-        `Collection crashed store=${storeId} run=${runId}`,
+        `Collection crashed store=${storeId} run=${runId} `
+        + `attempt=${claim.attempt}`,
         error instanceof Error ? error.stack : String(error)
       )
+      // Most often the cause passes by itself (the database was away for a
+      // moment). So the run is left alone: with no more signs of life it is
+      // taken up again in a few minutes, and the pages already read are
+      // reused. Only the last attempt records the failure.
+      if (claim.attempt < MAX_ATTEMPTS) return 'crashed'
       await this.runs.finish(claim, {
         status: 'failed',
         errorCode: 'internal_error'
@@ -170,68 +209,15 @@ export class CollectionService {
     if (!(await this.runs.heartbeat(claim, progress()))) return this.lost(claim)
 
     const missing = targets.filter((target) => !readings.has(target.offerId))
-    let stoppedBy: 'blocked_by_site' | 'robots_refused' | 'robots_unavailable' | 'crawl_delay_too_long' | null = null
-
-    if (missing.length > 0) {
-      const robots = await this.pages.fetchRobots()
-      if (robots.kind === 'blocked') {
-        stoppedBy = 'robots_refused'
-      } else if (robots.kind === 'unavailable') {
-        this.logger.warn(`robots.txt unavailable: ${robots.reason}`)
-        stoppedBy = 'robots_unavailable'
-      } else {
-        const crawlDelay = this.pages.crawlDelaySeconds(robots.groups)
-        if (crawlDelay > MAX_CRAWL_DELAY_SECONDS) {
-          stoppedBy = 'crawl_delay_too_long'
-        } else {
-          const pauseMs = Math.max(this.timings.pageIntervalMs, crawlDelay * 1000)
-          let consecutiveBlocks = 0
-          let firstRequest = true
-          let disallowed = 0
-
-          for (const target of missing) {
-            if (control.stopRequested) {
-              await this.runs.requeue(claim)
-              return 'requeued'
-            }
-
-            if (!this.pages.isAllowed(robots.groups, target.productUrl)) {
-              readings.set(target.offerId, {
-                snapshotId: null,
-                outcome: 'disallowed',
-                offers: null
-              })
-              disallowed++
-              continue
-            }
-
-            if (!firstRequest && !(await this.pause(pauseMs, control))) {
-              await this.runs.requeue(claim)
-              return 'requeued'
-            }
-            firstRequest = false
-
-            const reading = await this.pages.fetchPage(target.productUrl)
-            const snapshotId = await this.storeReading(target, reading)
-            readings.set(target.offerId, { ...reading, snapshotId })
-            if (!(await this.runs.heartbeat(claim, progress()))) {
-              return this.lost(claim)
-            }
-
-            consecutiveBlocks = reading.outcome === 'blocked'
-              ? consecutiveBlocks + 1
-              : 0
-            if (consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
-              stoppedBy = 'blocked_by_site'
-              break
-            }
-          }
-          // robots.txt lets this client read none of the pages: that is the
-          // site saying no, not a page-by-page problem.
-          if (disallowed === missing.length) stoppedBy = 'robots_refused'
-        }
-      }
+    const phase: ReadingPhase = missing.length === 0
+      ? { interrupted: null, stoppedBy: null }
+      : await this.readPages(claim, control, missing, readings, progress)
+    if (phase.interrupted !== null) {
+      if (phase.interrupted === 'lost') return this.lost(claim)
+      await this.runs.requeue(claim)
+      return 'requeued'
     }
+    const { stoppedBy } = phase
 
     // 3. The comparisons, from whatever was read.
     if (!(await this.runs.heartbeat(claim, progress()))) return this.lost(claim)
@@ -241,16 +227,17 @@ export class CollectionService {
     }
 
     const final = progress()
-    if (stoppedBy === 'blocked_by_site' || stoppedBy === 'robots_refused') {
+    if (stoppedBy) {
       await this.runs.finish(claim, {
-        status: 'blocked',
+        status: REFUSALS.includes(stoppedBy) ? 'blocked' : 'failed',
         errorCode: stoppedBy,
         progress: final
       })
-    } else if (stoppedBy) {
+    } else if (final.ok === 0) {
+      // Every page was looked at and not one could be used.
       await this.runs.finish(claim, {
         status: 'failed',
-        errorCode: stoppedBy,
+        errorCode: 'no_page_read',
         progress: final
       })
     } else if (identity.kind !== 'known') {
@@ -266,6 +253,116 @@ export class CollectionService {
       })
     }
     return 'finished'
+  }
+
+  /**
+   * Goes to the website for the pages that have no recent reading, one at a
+   * time, storing each reading as it is made.
+   */
+  private async readPages(
+    claim: Claim,
+    control: CollectionControl,
+    missing: readonly Target[],
+    readings: Map<bigint, Reading>,
+    progress: () => RunProgress
+  ): Promise<ReadingPhase> {
+    const stopped = (stoppedBy: StopReason | null): ReadingPhase => ({
+      interrupted: null,
+      stoppedBy
+    })
+
+    // Refused a moment ago, in this run or in another store's: not again yet.
+    if (await this.refusedRecently()) return stopped('blocked_by_site')
+
+    const robots = await this.pages.fetchRobots()
+    if (robots.kind === 'blocked') return stopped('robots_refused')
+    if (robots.kind === 'unavailable') {
+      this.logger.warn(`robots.txt unavailable: ${robots.reason}`)
+      return stopped('robots_unavailable')
+    }
+    const crawlDelay = this.pages.crawlDelaySeconds(robots.groups)
+    if (crawlDelay > MAX_CRAWL_DELAY_SECONDS) {
+      return stopped('crawl_delay_too_long')
+    }
+
+    const pauseMs = Math.max(this.timings.pageIntervalMs, crawlDelay * 1000)
+    const deadline = Date.now() + this.timings.maxRunMs
+    let consecutiveBlocks = 0
+    let unreadable = { inARow: 0, layout: 0 }
+    let firstRequest = true
+    let disallowed = 0
+
+    for (const target of missing) {
+      if (control.stopRequested) return { interrupted: 'requeued' }
+      if (Date.now() > deadline) return stopped('run_too_long')
+
+      if (!this.pages.isAllowed(robots.groups, target.productUrl)) {
+        readings.set(target.offerId, {
+          snapshotId: null,
+          outcome: 'disallowed',
+          offers: null
+        })
+        disallowed++
+        continue
+      }
+
+      if (!firstRequest && !(await this.pause(pauseMs, control))) {
+        return { interrupted: 'requeued' }
+      }
+      firstRequest = false
+
+      const reading = await this.pages.fetchPage(target.productUrl)
+      const snapshotId = await this.storeReading(target, reading)
+      readings.set(target.offerId, { ...reading, snapshotId })
+      if (!(await this.runs.heartbeat(claim, progress()))) {
+        return { interrupted: 'lost' }
+      }
+
+      const { outcome } = reading
+      consecutiveBlocks = outcome === 'blocked' ? consecutiveBlocks + 1 : 0
+      if (consecutiveBlocks >= MAX_CONSECUTIVE_BLOCKS) {
+        return stopped('blocked_by_site')
+      }
+
+      // `ok` and `not_found` are answers about the page. Anything else is
+      // a page the hub could not use.
+      unreadable = outcome === 'ok' || outcome === 'not_found'
+        ? { inARow: 0, layout: 0 }
+        : {
+            inARow: unreadable.inARow + 1,
+            layout: unreadable.layout + (outcome === 'no_offer_list' ? 1 : 0)
+          }
+      if (unreadable.inARow >= MAX_CONSECUTIVE_UNREADABLE) {
+        return stopped(
+          unreadable.layout === unreadable.inARow
+            ? 'page_layout_changed'
+            : 'site_unavailable'
+        )
+      }
+    }
+
+    // robots.txt lets this client read none of the pages: that is the site
+    // saying no, not a page-by-page problem.
+    return stopped(disallowed === missing.length ? 'robots_refused' : null)
+  }
+
+  /**
+   * Whether the last pages read by the hub, for any store, were all refused,
+   * and recently. The readings are shared by every store, and so is the
+   * website's patience: one store's collection being refused keeps the
+   * others away too.
+   */
+  private async refusedRecently(): Promise<boolean> {
+    const latest = await this.prisma.kk_page_snapshots.findMany({
+      orderBy: { id: 'desc' },
+      take: MAX_CONSECUTIVE_BLOCKS,
+      select: { outcome: true, fetched_at: true }
+    })
+    return (
+      latest.length === MAX_CONSECUTIVE_BLOCKS
+      && latest.every((snapshot) => snapshot.outcome === 'blocked')
+      && Date.now() - latest[0].fetched_at.getTime() < this.timings.blockCooldownMs
+    )
   }
 
   private lost(claim: Claim): CollectionEnd {
@@ -335,7 +432,10 @@ export class CollectionService {
         fetched_at: {
           gt: new Date(Date.now() - this.timings.reuseReadingsForMs)
         },
-        outcome: { in: [...REUSABLE] }
+        outcome: { in: [...REUSABLE] },
+        // Read by this version of the parser: after a fix to the parser,
+        // what the old one made of a page is not trusted.
+        parser_version: PARSER_VERSION
       },
       orderBy: { fetched_at: 'desc' },
       select: { id: true, product_id: true, outcome: true, offers: true }
@@ -424,7 +524,8 @@ export class CollectionService {
     }
     this.logger.log(
       `Recognised the store on KuantoKusta store=${storeId} `
-      + `slug=${guess.storeSlug} seller=${guess.sellerId ?? '-'} `
+      // Text from a third-party page: quoted, so it cannot forge a log line.
+      + `slug=${JSON.stringify(guess.storeSlug)} seller=${guess.sellerId ?? '-'} `
       + `matches=${guess.matches}/${guess.pages}`
     )
     return this.recordIdentity(
@@ -460,9 +561,11 @@ export class CollectionService {
       this.logger.warn(
         `KuantoKusta identity already used by another store store=${storeId}`
       )
+      // Reported like any other "not recognised": the caller is not told
+      // that the name belongs to another store of the hub.
       return fallback
         ? { kind: 'known', store: fallback }
-        : { kind: 'unknown', errorCode: 'store_identity_conflict' }
+        : { kind: 'unknown', errorCode: 'store_identity_unknown' }
     }
   }
 

@@ -1,6 +1,11 @@
 import { describe, it, expect } from '@jest/globals'
 import { readFileSync } from 'node:fs'
-import { crawlDelaySeconds, isPathAllowed, parseRobots } from '#/modules/kuantokusta/domain/robots'
+import {
+  crawlDelaySeconds,
+  isPathAllowed,
+  parseRobots,
+  robotsLineCount
+} from '#/modules/kuantokusta/domain/robots'
 
 const kuantokusta = parseRobots(
   readFileSync(new URL('../../../../fixtures/robots-kuantokusta.txt', import.meta.url), 'utf8')
@@ -90,5 +95,50 @@ describe('robots.txt rules', () => {
     const started = performance.now()
     expect(isPathAllowed(parseRobots(hostile), CLIENT, `/${'a'.repeat(5000)}`)).toBe(true)
     expect(performance.now() - started).toBeLessThan(1000)
+  })
+
+  it('obeys both readings when an agent name is only part of the client\'s', () => {
+    // "hub" may or may not mean this client. Whichever it is, a path that
+    // either group forbids is not read.
+    const permissive = parseRobots(
+      'User-agent: hub\nAllow: /\n\nUser-agent: *\nDisallow: /p/'
+    )
+    const restrictive = parseRobots(
+      'User-agent: hub\nDisallow: /p/\nCrawl-delay: 9\n\n'
+      + 'User-agent: *\nAllow: /\nCrawl-delay: 2'
+    )
+
+    expect(isPathAllowed(permissive, CLIENT, '/p/1/x')).toBe(false)
+    expect(isPathAllowed(restrictive, CLIENT, '/p/1/x')).toBe(false)
+    expect(isPathAllowed(restrictive, CLIENT, '/other')).toBe(true)
+    expect(crawlDelaySeconds(restrictive, CLIENT)).toBe(9)
+  })
+
+  it('lets a group that names the client exactly replace the wildcard group', () => {
+    const groups = parseRobots(
+      `User-agent: ${CLIENT}\nAllow: /p/\nDisallow: /\n\nUser-agent: *\nDisallow: /p/`
+    )
+
+    expect(isPathAllowed(groups, CLIENT, '/p/1/x')).toBe(true)
+    expect(isPathAllowed(groups, CLIENT, '/search')).toBe(false)
+  })
+
+  it.each([
+    ['carriage returns only', 'User-agent: *\rDisallow: /p/\r'],
+    ['Windows line endings', 'User-agent: *\r\nDisallow: /p/\r\n']
+  ])('reads a file with %s', (_case, text) => {
+    expect(isPathAllowed(parseRobots(text), CLIENT, '/p/1/x')).toBe(false)
+    expect(robotsLineCount(text)).toBe(3)
+  })
+
+  it('still obeys a Disallow too long to keep whole, and ignores such an Allow', () => {
+    const long = `/p/${'a'.repeat(600)}`
+    const forbidden = parseRobots(`User-agent: *\nDisallow: ${long}`)
+    const permitted = parseRobots(
+      `User-agent: *\nDisallow: /p/\nAllow: ${long}`
+    )
+
+    expect(isPathAllowed(forbidden, CLIENT, long)).toBe(false)
+    expect(isPathAllowed(permitted, CLIENT, long)).toBe(false)
   })
 })

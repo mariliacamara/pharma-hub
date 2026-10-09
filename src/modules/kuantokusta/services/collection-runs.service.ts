@@ -82,10 +82,27 @@ const MANUAL_WAIT_MS: Record<string, number> = {
   blocked: 60 * 60_000,
   failed: 60_000
 }
+// Failures that came from the website, not from the hub or the Seller API.
+// Trying again a minute later would be insisting, so they wait like a block.
+const SITE_FAILURES: readonly string[] = [
+  'robots_unavailable',
+  'crawl_delay_too_long',
+  'page_layout_changed',
+  'site_unavailable',
+  'no_page_read',
+  'run_too_long'
+]
+
+function manualWaitMs(last: RunView): number {
+  if (last.errorCode !== null && SITE_FAILURES.includes(last.errorCode)) {
+    return MANUAL_WAIT_MS.blocked
+  }
+  return MANUAL_WAIT_MS[last.status] ?? 0
+}
 // A worker that is alive writes a heartbeat far more often than this.
 const ABANDONED_AFTER_SECONDS = 180
 // A run that was abandoned this many times is not tried again.
-const MAX_ATTEMPTS = 3
+export const MAX_ATTEMPTS = 3
 // Names the lock that makes workers choose their next run one at a time.
 const CLAIM_LOCK = 'kk_collection_claim'
 
@@ -146,7 +163,7 @@ export class CollectionRunsService {
     if (origin.trigger === 'manual' && !origin.ignoreWait) {
       const last = await this.latest(storeId)
       if (last?.finishedAt) {
-        const wait = MANUAL_WAIT_MS[last.status] ?? 0
+        const wait = manualWaitMs(last)
         const since = Date.now() - last.finishedAt.getTime()
         if (since < wait) {
           throw new RunTooSoonError(Math.ceil((wait - since) / 1000))
@@ -155,8 +172,11 @@ export class CollectionRunsService {
     }
 
     const id = uuidV7()
+    // A name typed by someone, shown later in a terminal and in the panel:
+    // kept as one line of plain text.
     const requestedBy = origin.trigger === 'manual'
-      ? origin.requestedBy.trim().slice(0, 120) || 'unknown'
+      ? origin.requestedBy.replace(/\p{Cc}/gu, ' ').trim().slice(0, 120)
+      || 'unknown'
       : null
     try {
       const run = await this.prisma.withStore(storeId, async (tx) => {

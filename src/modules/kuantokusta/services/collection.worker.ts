@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 
 import { Injectable, Logger } from '@nestjs/common'
-import type { OnApplicationShutdown } from '@nestjs/common'
+import type { OnModuleDestroy } from '@nestjs/common'
 
 import { CollectionRunsService } from './collection-runs.service'
 import { CollectionService } from './collection.service'
@@ -20,7 +20,7 @@ const POLL_MS = 5_000
 const HEARTBEAT_MS = 30_000
 
 @Injectable()
-export class CollectionWorker implements OnApplicationShutdown {
+export class CollectionWorker implements OnModuleDestroy {
   private readonly logger = new Logger(CollectionWorker.name)
   private readonly stopping = new AbortController()
   private loop: Promise<void> | null = null
@@ -36,8 +36,13 @@ export class CollectionWorker implements OnApplicationShutdown {
     this.loop = this.work()
   }
 
-  /** Asks the worker to stop and waits until it has put its run back. */
-  async onApplicationShutdown(): Promise<void> {
+  /**
+   * Asks the worker to stop and waits until it has put its run back.
+   *
+   * In the first phase of a shutdown on purpose: the database connection is
+   * closed in the last one (PrismaService), so the run can still be written.
+   */
+  async onModuleDestroy(): Promise<void> {
     this.stopping.abort()
     await this.loop
   }

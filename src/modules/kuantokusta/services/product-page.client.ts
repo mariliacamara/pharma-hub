@@ -1,8 +1,14 @@
 import { Logger } from '@nestjs/common'
 
-import { readPageResponse } from '../domain/page-reading'
+import { looksLikeChallenge, readPageResponse } from '../domain/page-reading'
 import type { PageReading } from '../domain/page-reading'
-import { crawlDelaySeconds, isPathAllowed, parseRobots } from '../domain/robots'
+import {
+  crawlDelaySeconds,
+  isPathAllowed,
+  parseRobots,
+  ROBOTS_MAX_LINES,
+  robotsLineCount
+} from '../domain/robots'
 import type { RobotsGroup } from '../domain/robots'
 import { readProductUrl } from '../domain/seller-offer'
 
@@ -60,7 +66,9 @@ export class ProductPageClient {
       return { kind: 'unavailable', reason: describeNetworkError(error) }
     }
 
-    if (response.status === 401 || response.status === 403) {
+    // 429 included: "too many requests" is the site asking the hub to stay
+    // away for now, and is treated like any other refusal.
+    if ([401, 403, 429].includes(response.status)) {
       await discard(response)
       return { kind: 'blocked', httpStatus: response.status }
     }
@@ -78,6 +86,17 @@ export class ProductPageClient {
 
     try {
       const text = await readBody(response, MAX_ROBOTS_BYTES)
+      // A challenge page served in place of the file is a refusal, and any
+      // other web page is not a robots.txt: neither is read as "no rules".
+      if (looksLikeChallenge(text)) {
+        return { kind: 'blocked', httpStatus: response.status }
+      }
+      if (/^\s*<(!doctype|html)/i.test(text.slice(0, 200))) {
+        return { kind: 'unavailable', reason: 'a web page, not a robots.txt' }
+      }
+      if (robotsLineCount(text) > ROBOTS_MAX_LINES) {
+        return { kind: 'unavailable', reason: 'too long to be read whole' }
+      }
       return { kind: 'rules', groups: parseRobots(text) }
     } catch (error) {
       return { kind: 'unavailable', reason: describeNetworkError(error) }

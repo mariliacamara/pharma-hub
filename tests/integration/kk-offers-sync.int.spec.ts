@@ -61,7 +61,7 @@ describe('KuantoKusta offers sync', () => {
   afterAll(async () => {
     await deleteStores(prisma, created)
     await products.cleanUp(prisma)
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
     await server.stop()
   })
 

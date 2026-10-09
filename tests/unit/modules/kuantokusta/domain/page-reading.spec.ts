@@ -97,4 +97,15 @@ describe('looksLikeChallenge', () => {
       expect(looksLikeChallenge(html)).toBe(false)
     }
   )
+
+  it.each([
+    ['title tags that never close', '<title '.repeat(580_000)],
+    ['titles that never end', '<title>'.repeat(580_000)]
+  ])('stays fast on a 4 MB page made of %s', (_case, html) => {
+    const started = performance.now()
+
+    expect(looksLikeChallenge(html)).toBe(false)
+    expect(readPageResponse(200, html).outcome).toBe('no_offer_list')
+    expect(performance.now() - started).toBeLessThan(1_000)
+  })
 })

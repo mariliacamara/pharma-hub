@@ -33,14 +33,18 @@ export interface PageReading {
 // Titles of the pages a bot protection service shows instead of the content.
 const CHALLENGE_TITLE
   = /just a moment|attention required|access denied|access to this page has been denied|captcha|um momento/i
-const TITLE = /<title[^>]*>([^<]{0,300})<\/title>/i
+// Every part is bounded, so a page built to make this slow cannot.
+const HEAD_LENGTH = 64 * 1024
+const TITLE = /<title[^>]{0,200}>([^<]{0,300})<\/title>/i
 
 /**
  * True for a page that is a challenge or a refusal rather than a product.
  * Such a page can come with status 200, so the status alone is not enough.
  */
 export function looksLikeChallenge(html: string): boolean {
-  const title = TITLE.exec(html)?.[1] ?? ''
+  // The title is at the top of a page. Looking only there keeps the cost
+  // small whatever the page is made of.
+  const title = TITLE.exec(html.slice(0, HEAD_LENGTH))?.[1] ?? ''
   return CHALLENGE_TITLE.test(title) || html.includes('px-captcha')
 }
 

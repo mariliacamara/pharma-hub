@@ -24,7 +24,7 @@ describe('database session', () => {
   })
 
   afterAll(async () => {
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
   })
 
   it('runs in UTC, whatever the server default is', async () => {

@@ -102,7 +102,9 @@ describe('plugin API: collections', () => {
         ) =>
           new CollectionService(db, runs, offersSync, settings, pages, {
             pageIntervalMs: 0,
-            reuseReadingsForMs: 2 * 60 * 60_000
+            reuseReadingsForMs: 2 * 60 * 60_000,
+            blockCooldownMs: 30 * 60_000,
+            maxRunMs: 60 * 60_000
           }),
         inject: [
           PrismaService,
@@ -344,7 +346,9 @@ describe('plugin API: collections', () => {
     ['a store chosen by the caller', { requestedBy: 'x', store: 'zincomed' }],
     ['an empty name', { requestedBy: '   ' }],
     ['a name that is too long', { requestedBy: 'x'.repeat(121) }],
-    ['a name that is not text', { requestedBy: 42 }]
+    ['a name that is not text', { requestedBy: 42 }],
+    ['a name with control characters', { requestedBy: 'maria\u001b[31m' }],
+    ['a name with a line break', { requestedBy: 'maria\nsilva' }]
   ])('refuses a request with %s', async (_case, body) => {
     const response = await http().post(RUNS).set(as(tokenA)).send(body)
 

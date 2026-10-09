@@ -218,7 +218,7 @@ describe('ProductPageClient', () => {
       expect(await client.fetchRobots()).toEqual({ kind: 'rules', groups: [] })
     })
 
-    it.each([401, 403])('takes a %i as a refusal of this client', async (status) => {
+    it.each([401, 403, 429])('takes a %i as a refusal of this client', async (status) => {
       site.robots = { status }
 
       expect(await client.fetchRobots()).toEqual({
@@ -227,7 +227,7 @@ describe('ProductPageClient', () => {
       })
     })
 
-    it.each([500, 503, 301, 429])(
+    it.each([500, 503, 301])(
       'takes a %i as "rules unknown", which allows nothing',
       async (status) => {
         site.robots = { status }
@@ -245,6 +245,33 @@ describe('ProductPageClient', () => {
       expect(await client.fetchRobots()).toEqual({
         kind: 'unavailable',
         reason: 'network error'
+      })
+    })
+
+    it('takes a challenge page served in place of the file as a refusal', async () => {
+      site.robots = CHALLENGE_HTML
+
+      expect(await client.fetchRobots()).toEqual({
+        kind: 'blocked',
+        httpStatus: 200
+      })
+    })
+
+    it('does not read a web page as "no rules"', async () => {
+      site.robots = '<!DOCTYPE html><html><head><title>KuantoKusta</title></head></html>'
+
+      expect(await client.fetchRobots()).toEqual({
+        kind: 'unavailable',
+        reason: 'a web page, not a robots.txt'
+      })
+    })
+
+    it('does not read part of a file with more lines than it reads', async () => {
+      site.robots = `User-agent: *\n${'#\n'.repeat(25_000)}Disallow: /p/\n`
+
+      expect(await client.fetchRobots()).toEqual({
+        kind: 'unavailable',
+        reason: 'too long to be read whole'
       })
     })
 
