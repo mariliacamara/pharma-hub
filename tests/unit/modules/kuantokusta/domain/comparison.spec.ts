@@ -3,6 +3,7 @@ import {
   comparePrices,
   differencePercent,
   isEasyAdjust,
+  needsLinkCheck,
   type StoreIdentity
 } from '#/modules/kuantokusta/domain/comparison'
 import type { PageOffer } from '#/modules/kuantokusta/domain/page-offers'
@@ -215,5 +216,36 @@ describe('isEasyAdjust', () => {
     })
     expect(result.differenceCents).toBe(10)
     expect(isEasyAdjust(result.differenceCents, 10)).toBe(true)
+  })
+})
+
+describe('needsLinkCheck', () => {
+  const compare = (storePriceCents: number, lowestPriceCents: number | null) => ({
+    storePriceCents,
+    lowestPriceCents,
+    differenceCents: lowestPriceCents === null ? null : storePriceCents - lowestPriceCents
+  })
+
+  it('flags a gap of 50% or more, whichever store is cheaper', () => {
+    // A box of 10 at 27.89 EUR against 1.75 EUR: a different pack size, not a price gap.
+    expect(needsLinkCheck(compare(2789, 175))).toBe(true)
+    expect(needsLinkCheck(compare(175, 2789))).toBe(true)
+  })
+
+  it('flags exactly half, and not just under it', () => {
+    expect(needsLinkCheck(compare(1000, 500))).toBe(true)
+    expect(needsLinkCheck(compare(1000, 501))).toBe(false)
+    expect(needsLinkCheck(compare(500, 1000))).toBe(true)
+    expect(needsLinkCheck(compare(501, 1000))).toBe(false)
+  })
+
+  it('does not flag a tie or a comparison without competitors', () => {
+    expect(needsLinkCheck(compare(1000, 1000))).toBe(false)
+    expect(needsLinkCheck(compare(0, 0))).toBe(false)
+    expect(needsLinkCheck(compare(1000, null))).toBe(false)
+  })
+
+  it('flags a free offer against a paid one', () => {
+    expect(needsLinkCheck(compare(0, 450))).toBe(true)
   })
 })

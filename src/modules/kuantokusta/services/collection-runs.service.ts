@@ -236,6 +236,26 @@ export class CollectionRunsService {
     return (await this.list(storeId, 1))[0] ?? null
   }
 
+  /**
+   * The store's most recent collection that has ended, however it ended.
+   * Comparisons are written when a collection ends, so one still waiting or
+   * running has none yet.
+   */
+  async latestFinished(storeId: string): Promise<RunView | null> {
+    const row = await this.prisma.withStore(storeId, (tx) =>
+      tx.job_runs.findFirst({
+        where: {
+          job_type: FULL_COLLECTION,
+          status: { in: ['succeeded', 'partial', 'failed', 'blocked'] },
+          finished_at: { not: null }
+        },
+        orderBy: [{ finished_at: 'desc' }, { id: 'desc' }],
+        select: VIEW
+      })
+    )
+    return row ? toView(row) : null
+  }
+
   /** How the offers of a run compared, by outcome. */
   async summary(storeId: string, runId: string): Promise<ComparisonCounts> {
     const groups = await this.prisma.withStore(storeId, (tx) =>

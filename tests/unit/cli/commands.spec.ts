@@ -472,7 +472,7 @@ describe('operator commands', () => {
           STORE.id,
           { storeSlug: 'zincomed', sellerId: null }
         ],
-        ['settings.setEasyAdjust', STORE.id, 15]
+        ['settings.setEasyAdjust', STORE.id, 15, { type: 'system', label: 'cli' }]
       ])
       expect(lines).toEqual([
         'Settings of "zincomed" for KuantoKusta:',

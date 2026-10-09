@@ -136,3 +136,27 @@ function cheapestTotal(
   }
   return best
 }
+
+/**
+ * From this percentage on (either sign), a comparison more likely means the offer sits on
+ * the page of another product, variant or pack size than a real price gap. In the first
+ * full run, 4 of 185 offers were on the wrong page, all with gaps this large.
+ */
+export const CHECK_LINK_PERCENT = 50
+
+/**
+ * The gap is so large that someone should check that the KuantoKusta page is really the
+ * same product before acting on it. Measured like `differencePercent` (against the higher
+ * price), so 50 means one price is at most half the other. Worked out in whole numbers,
+ * the same way the report's database query does, so both always agree.
+ */
+export function needsLinkCheck(
+  comparison: Pick<Comparison, 'storePriceCents' | 'lowestPriceCents' | 'differenceCents'>
+): boolean {
+  const { storePriceCents, lowestPriceCents, differenceCents } = comparison
+  if (lowestPriceCents === null || differenceCents === null || differenceCents === 0) {
+    return false
+  }
+  const higher = Math.max(storePriceCents, lowestPriceCents)
+  return Math.abs(differenceCents) * 100 >= CHECK_LINK_PERCENT * higher
+}
