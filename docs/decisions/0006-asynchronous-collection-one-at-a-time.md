@@ -18,6 +18,10 @@ block the client.
   `job_runs` enforces it.
 - Manual runs have a minimum interval. A single-offer refresh is allowed in parallel.
 
+How this was built is in decisions 0023 (the queue and the worker), 0024 (interruptions)
+and 0026 (the daily schedule is off until KuantoKusta agrees; the waits after a run).
+The single-offer refresh is not built.
+
 ## Consequences
 
 - The report screen opens instantly and shows when the data was collected.

@@ -37,7 +37,7 @@ describe('store credentials', () => {
 
   afterAll(async () => {
     await deleteStores(prisma, [storeA, storeB])
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
   })
 
   const rowOf = (store: TestStore) =>

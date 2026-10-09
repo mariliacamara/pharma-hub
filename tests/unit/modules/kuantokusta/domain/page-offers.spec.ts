@@ -106,4 +106,64 @@ describe('parseProductPage', () => {
     expect(offer?.storeName).toHaveLength(200)
     expect(offer?.sellerId).toBeNull()
   })
+
+  it('finds the embedded data whatever comes before the id in the tag', () => {
+    const data = JSON.stringify({
+      props: { pageProps: { basePage: { product: { offers: [realShapedOffer] } } } }
+    })
+
+    for (const tag of [
+      `<script id="__NEXT_DATA__" type="application/json">`,
+      `<script type="application/json" id="__NEXT_DATA__">`,
+      `<script type='application/json' id='__NEXT_DATA__' nonce="x">`
+    ]) {
+      expect(offersOf(`<html><body>${tag}${data}</script></body></html>`))
+        .toHaveLength(1)
+    }
+  })
+
+  it('does not take the id written in plain text for the data', () => {
+    const html = '<p>the id="__NEXT_DATA__" block</p><b>{"props":{}}</b></script>'
+
+    expect(parseProductPage(html)).toEqual({ outcome: 'no_offer_list' })
+  })
+
+  it.each([
+    ['a price no store charges', { price: 1_000_000.01 }],
+    ['a price built to overflow the arithmetic', { price: 1e300 }]
+  ])('leaves out an offer with %s', (_case, change) => {
+    const offers = offersOf(
+      pageWith([realShapedOffer, { ...realShapedOffer, ...change, storeSlug: 'x' }])
+    )
+
+    expect(offers.map((offer) => offer.storeSlug)).toEqual(['techinn'])
+  })
+
+  it('reads a shipping cost no store charges as unknown', () => {
+    const [offer] = offersOf(
+      pageWith([{ ...realShapedOffer, shipping: { minimumPrice: 1e12 } }])
+    )
+
+    expect(offer.shippingCents).toBeNull()
+  })
+
+  it('does not accept a list far longer than any real page has', () => {
+    const many = Array.from({ length: 1_001 }, () => realShapedOffer)
+
+    expect(parseProductPage(pageWith(many))).toEqual({ outcome: 'no_offer_list' })
+    expect(offersOf(pageWith(many.slice(0, 1_000)))).toHaveLength(1_000)
+  })
+
+  it.each([
+    ['unclosed script tags', '<script '.repeat(500_000)],
+    ['tags that open the data and never close', '<script id="__NEXT_DATA__" '.repeat(150_000)],
+    ['the id repeated without a tag', 'id="__NEXT_DATA__"'.repeat(200_000)],
+    ['data that never ends', `<script id="__NEXT_DATA__">${'{"a":'.repeat(700_000)}`]
+  ])('stays fast on a 4 MB page made of %s', (_case, html) => {
+    const started = performance.now()
+
+    expect(parseProductPage(html.slice(0, 4 * 1024 * 1024)).outcome)
+      .toBe('no_offer_list')
+    expect(performance.now() - started).toBeLessThan(1_000)
+  })
 })

@@ -6,7 +6,17 @@ import {
 } from '#/modules/api-tokens/domain/token-principal'
 import type { ApiTokensService } from '#/modules/api-tokens/services/api-tokens.service'
 import type { AuditActor } from '#/modules/audit/services/audit.service'
+import { RunTooSoonError } from '#/modules/kuantokusta/services/collection-runs.service'
+import type {
+  CollectionRunsService,
+  RunView
+} from '#/modules/kuantokusta/services/collection-runs.service'
 import type { KkCredentialService } from '#/modules/kuantokusta/services/kk-credential.service'
+import {
+  InvalidKkSettingsError,
+  KkIdentityTakenError
+} from '#/modules/kuantokusta/services/kk-store-settings.service'
+import type { KkStoreSettingsService } from '#/modules/kuantokusta/services/kk-store-settings.service'
 import type { OffersSyncService } from '#/modules/kuantokusta/services/offers-sync.service'
 import type { OffersService } from '#/modules/kuantokusta/services/offers.service'
 import type {
@@ -29,6 +39,11 @@ export interface CliServices {
   kkCredential: Pick<KkCredentialService, 'replace' | 'status' | 'isReadable'>
   kkOffersSync: Pick<OffersSyncService, 'sync'>
   kkOffers: Pick<OffersService, 'count'>
+  kkRuns: Pick<CollectionRunsService, 'request' | 'list' | 'summary'>
+  kkSettings: Pick<
+    KkStoreSettingsService,
+    'get' | 'setIdentity' | 'setEasyAdjust'
+  >
 }
 
 export interface CliIo {
@@ -71,6 +86,13 @@ KuantoKusta
   kk:sync-offers  --store <slug> [--allow-mass-delisting]
   kk:status       --store <slug>
   kk:check-keys                    (can every stored key still be decrypted?)
+
+KuantoKusta price collection
+  kk:collect      --store <slug> [--ignore-wait]
+                  (queues a collection; the running service carries it out)
+  kk:runs         --store <slug>   (the latest collections and their results)
+  kk:configure    --store <slug> [--kk-slug <the store's name in KuantoKusta
+                  addresses>] [--seller-id <n>] [--easy-adjust-cents <n>]
 `
 
 const ACTOR: AuditActor = { type: 'system', label: 'cli' }
@@ -309,6 +331,139 @@ export async function runCommand(
       return
     }
 
+    case 'kk:collect': {
+      const options = parseOptions(args, ['store'], ['ignore-wait'])
+      const store = await storeOf(options)
+      const status = await services.kkCredential.status(store.id)
+      if (!status.configured) {
+        throw new CheckFailedError(
+          `"${store.slug}" has no KuantoKusta key yet. Run kk:set-key first.`
+        )
+      }
+
+      let outcome: { run: RunView, created: boolean }
+      try {
+        outcome = await services.kkRuns.request(
+          store.id,
+          {
+            trigger: 'manual',
+            requestedBy: 'cli',
+            ignoreWait: options['ignore-wait'] === 'true'
+          },
+          ACTOR
+        )
+      } catch (error) {
+        if (!(error instanceof RunTooSoonError)) throw error
+        throw new CheckFailedError(
+          'A collection finished a moment ago. Its result is the current '
+          + `one: see kk:runs. To run again anyway, wait `
+          + `${Math.ceil(error.retryAfterSeconds / 60)} minute(s) or add `
+          + '--ignore-wait.'
+        )
+      }
+
+      io.write(
+        outcome.created
+          ? `Collection queued for "${store.slug}": ${outcome.run.id}`
+          : `"${store.slug}" already has a collection ${outcome.run.status}: `
+            + outcome.run.id
+      )
+      io.write(
+        'The running service carries it out, one product page every few '
+        + 'seconds.'
+      )
+      io.write(`Follow it with: kk:runs --store ${store.slug}`)
+      return
+    }
+
+    case 'kk:runs': {
+      const options = parseOptions(args, ['store'])
+      const store = await storeOf(options)
+      const runs = await services.kkRuns.list(store.id, 10)
+      if (runs.length === 0) {
+        io.write('No collections yet.')
+        return
+      }
+      for (const run of runs) {
+        io.write(
+          [
+            run.queuedAt.toISOString(),
+            run.status + (run.errorCode ? ` (${run.errorCode})` : ''),
+            `pages read ${run.itemsOk}, not read ${run.itemsFailed}, `
+            + `of ${run.itemsTotal}`,
+            run.trigger === 'schedule' ? 'scheduled' : `by ${run.requestedBy}`,
+            run.id
+          ].join('\t')
+        )
+      }
+      const [latest] = runs
+      if (latest.finishedAt) {
+        const counts = await services.kkRuns.summary(store.id, latest.id)
+        io.write('')
+        io.write('Latest collection, offer by offer:')
+        io.write(`  cheapest:           ${counts.cheapest}`)
+        io.write(`  tied for cheapest:  ${counts.tied}`)
+        io.write(`  more expensive:     ${counts.more_expensive}`)
+        io.write(`  only store selling: ${counts.only_store}`)
+        io.write(`  page not read:      ${counts.no_data}`)
+      }
+      return
+    }
+
+    case 'kk:configure': {
+      const options = parseOptions(args, [
+        'store',
+        'kk-slug',
+        'seller-id',
+        'easy-adjust-cents'
+      ])
+      const store = await storeOf(options)
+      const kkSlug = options['kk-slug']?.trim()
+      const wholeNumber = (name: string, max: number): number | undefined => {
+        const text = options[name]
+        if (text === undefined) return undefined
+        if (!/^\d{1,9}$/.test(text.trim()) || Number(text) > max) {
+          throw new UsageError(`--${name} must be a whole number`)
+        }
+        return Number(text)
+      }
+      const sellerId = wholeNumber('seller-id', 2_000_000_000)
+      const easyAdjust = wholeNumber('easy-adjust-cents', 100_000)
+      if (sellerId !== undefined && !kkSlug) {
+        throw new UsageError('--seller-id needs --kk-slug')
+      }
+      if (!kkSlug && easyAdjust === undefined) {
+        throw new UsageError('Nothing to change: give --kk-slug or --easy-adjust-cents')
+      }
+
+      try {
+        if (kkSlug) {
+          await services.kkSettings.setIdentity(store.id, {
+            storeSlug: kkSlug,
+            sellerId: sellerId ?? null
+          })
+        }
+        if (easyAdjust !== undefined) {
+          await services.kkSettings.setEasyAdjust(store.id, easyAdjust)
+        }
+      } catch (error) {
+        if (
+          error instanceof InvalidKkSettingsError
+          || error instanceof KkIdentityTakenError
+        ) {
+          throw new CheckFailedError(error.message)
+        }
+        throw error
+      }
+
+      const settings = await services.kkSettings.get(store.id)
+      io.write(`Settings of "${store.slug}" for KuantoKusta:`)
+      io.write(`  appears on KuantoKusta as: ${settings?.identity.storeSlug}`)
+      io.write(`  seller id:                 ${settings?.identity.sellerId ?? 'not known yet'}`)
+      io.write(`  easy adjust up to:         ${settings?.easyAdjustCents} cents`)
+      return
+    }
+
     case 'kk:check-keys': {
       parseOptions(args, [])
       const stores = await services.stores.list()
@@ -341,6 +496,24 @@ export async function runCommand(
           : 'Key: not configured'
       )
       io.write(`Offers: ${offers.listed} listed, ${offers.delisted} delisted`)
+
+      const settings = await services.kkSettings.get(store.id)
+      io.write(
+        settings
+          ? `Appears on KuantoKusta as: ${settings.identity.storeSlug} `
+          + `(seller id ${settings.identity.sellerId ?? 'not known yet'}); `
+          + `easy adjust up to ${settings.easyAdjustCents} cents`
+          : 'Appears on KuantoKusta as: not known yet '
+            + '(the first collection works it out)'
+      )
+      const [latest] = await services.kkRuns.list(store.id, 1)
+      io.write(
+        latest
+          ? `Latest collection: ${latest.status}`
+          + (latest.errorCode ? ` (${latest.errorCode})` : '')
+          + `, asked for ${latest.queuedAt.toISOString()}`
+          : 'Latest collection: none yet'
+      )
       return
     }
 

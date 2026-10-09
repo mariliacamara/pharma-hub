@@ -52,6 +52,20 @@ function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1'
 }
 
+// Names that only a web browser, or something pretending to be one, sends.
+const BROWSER_TOKENS = /mozilla|chrome|safari|gecko|applewebkit|firefox|edg\//i
+
+/**
+ * The name the price collection gives itself to KuantoKusta's website: a
+ * product token, then anything that helps the site know who is reading.
+ */
+function isHonestUserAgent(value: string): boolean {
+  return (
+    /^[A-Za-z][A-Za-z0-9._-]{2,40}\/\d[\w.]{0,15}( [\x20-\x7e]{1,150})?$/.test(value)
+    && !BROWSER_TOKENS.test(value)
+  )
+}
+
 const schema = z
   .object({
     // Production unless stated otherwise. The conveniences of development
@@ -109,7 +123,35 @@ const schema = z
     KK_SELLER_API_BASE_URL: z
       .string()
       .default('https://seller.kuantokusta.pt/api')
-      .refine((value) => URL.canParse(value), { error: 'must be a URL' })
+      .refine((value) => URL.canParse(value), { error: 'must be a URL' }),
+
+    // KuantoKusta's public website, whose product pages the collection
+    // reads. Only ever changed to point tests at a local fake.
+    KK_SITE_BASE_URL: z
+      .string()
+      .default('https://www.kuantokusta.pt')
+      .refine((value) => URL.canParse(value), { error: 'must be a URL' }),
+
+    // How the collection identifies itself to that website. It must say
+    // what it is: imitating a browser to get past a block is not allowed
+    // (docs/kuantokusta.md, "Collection rules").
+    KK_COLLECTOR_USER_AGENT: z
+      .string()
+      .default('PharmaHubPriceReport/1.0 (price report for partner stores)')
+      .refine(isHonestUserAgent, {
+        error:
+          'must look like "Name/1.0 (who is reading and why)" '
+          + 'and must not imitate a browser'
+      }),
+
+    // When the daily collection starts, as HH:MM in Portugal time. Left
+    // out, nothing is scheduled and collections run only when asked for.
+    KK_COLLECTION_DAILY_AT: z
+      .string()
+      .regex(/^([01]\d|2[0-3]):[0-5]\d$/, {
+        error: 'must be a time such as 06:30'
+      })
+      .optional()
   })
   .superRefine((value, context) => {
     const versions = value.CREDENTIALS_PREVIOUS_KEYS.map((key) => key.version)
@@ -138,41 +180,43 @@ const schema = z
       })
     }
 
-    // Already reported above as "must be a URL".
-    if (!URL.canParse(value.KK_SELLER_API_BASE_URL)) return
+    for (const name of ['KK_SELLER_API_BASE_URL', 'KK_SITE_BASE_URL'] as const) {
+      // Already reported above as "must be a URL".
+      if (!URL.canParse(value[name])) continue
+      const url = new URL(value[name])
 
-    // The store's API key travels to this address, so it must be encrypted
-    // in transit. Plain HTTP is accepted only for a local fake in tests.
-    const api = new URL(value.KK_SELLER_API_BASE_URL)
-    const localFake
-      = value.NODE_ENV !== 'production'
-        && api.protocol === 'http:'
-        && isLoopback(api.hostname)
-    if (api.protocol !== 'https:' && !localFake) {
-      context.addIssue({
-        code: 'custom',
-        path: ['KK_SELLER_API_BASE_URL'],
-        message: 'must use https'
-      })
-    }
-    // In production the key only ever goes to KuantoKusta. A typo in this
-    // variable must not send every store's key to someone else's server.
-    const kuantokusta
-      = api.hostname === 'kuantokusta.pt'
-        || api.hostname.endsWith('.kuantokusta.pt')
-    if (value.NODE_ENV === 'production' && !kuantokusta) {
-      context.addIssue({
-        code: 'custom',
-        path: ['KK_SELLER_API_BASE_URL'],
-        message: 'must be an address of kuantokusta.pt'
-      })
-    }
-    if (api.username !== '' || api.password !== '' || api.search !== '') {
-      context.addIssue({
-        code: 'custom',
-        path: ['KK_SELLER_API_BASE_URL'],
-        message: 'must not carry credentials or a query string'
-      })
+      // A store's API key, or the hub's own requests, travel to this
+      // address. Plain HTTP is accepted only for a local fake in tests.
+      const localFake
+        = value.NODE_ENV !== 'production'
+          && url.protocol === 'http:'
+          && isLoopback(url.hostname)
+      if (url.protocol !== 'https:' && !localFake) {
+        context.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'must use https'
+        })
+      }
+      // In production these only ever point at KuantoKusta. A typo must not
+      // send a store's key, or the collection, to someone else's server.
+      const kuantokusta
+        = url.hostname === 'kuantokusta.pt'
+          || url.hostname.endsWith('.kuantokusta.pt')
+      if (value.NODE_ENV === 'production' && !kuantokusta) {
+        context.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'must be an address of kuantokusta.pt'
+        })
+      }
+      if (url.username !== '' || url.password !== '' || url.search !== '') {
+        context.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'must not carry credentials or a query string'
+        })
+      }
     }
   })
 

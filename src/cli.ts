@@ -9,7 +9,9 @@ import {
 } from './cli/commands'
 import type { CliIo } from './cli/commands'
 import { ApiTokensService } from './modules/api-tokens/services/api-tokens.service'
+import { CollectionRunsService } from './modules/kuantokusta/services/collection-runs.service'
 import { KkCredentialService } from './modules/kuantokusta/services/kk-credential.service'
+import { KkStoreSettingsService } from './modules/kuantokusta/services/kk-store-settings.service'
 import { OffersSyncService } from './modules/kuantokusta/services/offers-sync.service'
 import { OffersService } from './modules/kuantokusta/services/offers.service'
 import { StoresService } from './modules/stores/services/stores.service'
@@ -84,7 +86,9 @@ try {
       tokens: app.get(ApiTokensService),
       kkCredential: app.get(KkCredentialService),
       kkOffersSync: app.get(OffersSyncService),
-      kkOffers: app.get(OffersService)
+      kkOffers: app.get(OffersService),
+      kkRuns: app.get(CollectionRunsService),
+      kkSettings: app.get(KkStoreSettingsService)
     },
     io
   )

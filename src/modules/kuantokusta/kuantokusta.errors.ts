@@ -2,6 +2,7 @@ import { ApiError } from '#/infra/http/api-error'
 import { CredentialDecryptionError } from '#/modules/credentials/domain/credential-cipher'
 import { InvalidCredentialError } from '#/modules/credentials/services/credentials.service'
 
+import { RunTooSoonError } from './services/collection-runs.service'
 import { KkKeyAttemptsExceededError } from './services/kk-credential.service'
 import { KkCredentialMissingError } from './services/offers-sync.service'
 import {
@@ -54,6 +55,14 @@ export function toApiError(error: unknown): unknown {
       502,
       'kk_unexpected_response',
       'KuantoKusta answered in a way the hub does not understand'
+    )
+  }
+  if (error instanceof RunTooSoonError) {
+    return new ApiError(
+      429,
+      'kk_run_too_soon',
+      'A collection finished a moment ago; its result is the current one',
+      { retryAfterSeconds: error.retryAfterSeconds }
     )
   }
   if (error instanceof CredentialDecryptionError) {

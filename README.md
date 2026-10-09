@@ -11,8 +11,8 @@ Farmácia Nova Porto and the 4DPharma integration are deferred (decision 0013).
 | Step | State |
 |---|---|
 | Foundation: database, isolation between stores, KuantoKusta rules | Built, deployed on Railway |
-| 1. Plugin tokens, encrypted KuantoKusta key, copy of the store's offers | Built |
-| 2. Scheduled daily collection of competitor prices | Not built |
+| 1. Plugin tokens, encrypted KuantoKusta key, copy of the store's offers | Built, deployed. First real copy on 2026-10-08: 346 offers |
+| 2. Collection of competitor prices: on request, and daily when switched on | Built. Not yet run against the real website from the service |
 | 3. Routes for the price report; the WordPress plugin | Not built |
 | 4. Admin API with Google sign-in; the panel | Not built |
 
@@ -27,7 +27,7 @@ at commit `593e139`, with the corrections listed in decision 0018.
 | `api-tokens` | Tokens that identify a store's plugin | Built |
 | `credentials` | Each store's keys for external systems, encrypted | Built |
 | `audit` | Append-only record of sensitive actions | Built |
-| `kuantokusta` | Compare each store's prices with the lowest price on KuantoKusta | Seller API client and offers copy built; price collection not yet |
+| `kuantokusta` | Compare each store's prices with the lowest price on KuantoKusta | Offers copy and price collection built; the report routes not yet |
 | `health` | `/health/live` and `/health/ready` | Built |
 | `fourdpharma` | Integration with 4DPharma | Deferred. Not designed |
 
@@ -41,6 +41,9 @@ checks. The store is always the one the token belongs to; no route accepts a sto
 | `PUT /v1/plugin/kuantokusta/credential` | `credentials:write` | Checks the store's KuantoKusta key with KuantoKusta and stores it encrypted |
 | `GET /v1/plugin/kuantokusta/credential` | `prices:read` | Says whether a key is configured and its last four characters. Never the key |
 | `GET /v1/plugin/kuantokusta/offers` | `prices:read` | The store's own offers, as last copied from KuantoKusta, in pages |
+| `POST /v1/plugin/kuantokusta/runs` | `prices:refresh` | Asks for a new collection of competitor prices. Answers at once; the collection takes minutes |
+| `GET /v1/plugin/kuantokusta/runs/{id}` | `prices:read` | How far a collection is, how it ended, and how many offers fell in each situation |
+| `GET /v1/plugin/kuantokusta/runs/latest`, `GET /v1/plugin/kuantokusta/runs` | `prices:read` | The most recent collection; the latest ones |
 | `GET /health/live`, `GET /health/ready` | none | For the host |
 
 Errors always have the same shape:
@@ -57,6 +60,7 @@ outside production.
 | `docs/architecture.md` | Components, request flows, tenant isolation, build order |
 | `docs/security.md` | How secrets and access are protected, and the limits of that protection |
 | `docs/kuantokusta.md` | Everything learned about KuantoKusta: API, pages, rules, data quirks |
+| `docs/new-environment.md` | Checklist to set up a new environment on Railway, from nothing to the first collection |
 | `docs/operations.md` | Deploying on Railway, the operator commands, what to do when something breaks |
 | `docs/decisions/` | One short record per decision: what, why, what was rejected |
 | `docs/open-questions.md` | What is undecided or unverified |
@@ -102,6 +106,9 @@ psql "$ADMIN_DATABASE_URL" -v app_password='a-long-random-password' -f db/roles.
 | `CREDENTIALS_MASTER_KEY` | yes | Encrypts the stores' credentials. `<version>:<base64 of 32 random bytes>` |
 | `CREDENTIALS_PREVIOUS_KEYS` | no | Older master keys, comma-separated, only while rotating |
 | `KK_SELLER_API_BASE_URL` | no | Defaults to the production Seller API. In production it must be an address of `kuantokusta.pt` |
+| `KK_COLLECTION_DAILY_AT` | no | A time such as `06:30`, in Portugal time, turns the daily collection on. Left out, collections run only when asked for (decision 0026) |
+| `KK_COLLECTOR_USER_AGENT` | no | The name the collection gives itself to the website. Must say what it is; a name that imitates a browser is refused |
+| `KK_SITE_BASE_URL` | no | The website whose product pages are read. Only changed to point tests at a local fake |
 | `PORT` | no | Defaults to 7000. Railway sets it |
 | `NODE_ENV` | no | Defaults to `production`. Set `development` locally (`.env.example` does) |
 
@@ -168,7 +175,7 @@ src/
 tests/
   unit/              mirrors src/
   integration/       against a real PostgreSQL, and a fake KuantoKusta on 127.0.0.1
-  support/           the fake KuantoKusta Seller API
+  support/           the fake KuantoKusta Seller API and the fake KuantoKusta website
   fixtures/          files used by tests
 prisma/              schema.prisma (derived) and the SQL migrations (source of truth)
 db/                  one-time SQL: the application role

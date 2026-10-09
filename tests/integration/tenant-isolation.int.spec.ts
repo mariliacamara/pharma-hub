@@ -39,7 +39,7 @@ describe('tenant isolation', () => {
 
   afterAll(async () => {
     await deleteStores(prisma, [storeA, storeB])
-    await prisma.onModuleDestroy()
+    await prisma.onApplicationShutdown()
   })
 
   it('shows a store only its own rows', async () => {

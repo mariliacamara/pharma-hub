@@ -1,6 +1,10 @@
 import { describe, it, expect } from '@jest/globals'
 
-import { lisbonWallTimeToInstant } from '#/modules/kuantokusta/domain/lisbon-time'
+import {
+  lisbonDailyInstant,
+  lisbonDateOf,
+  lisbonWallTimeToInstant
+} from '#/modules/kuantokusta/domain/lisbon-time'
 
 const iso = (value: string) => lisbonWallTimeToInstant(value)?.toISOString()
 
@@ -44,5 +48,29 @@ describe('lisbonWallTimeToInstant', () => {
     ' 2026-10-08 00:49:45'
   ])('returns null for %j', (value) => {
     expect(lisbonWallTimeToInstant(value)).toBeNull()
+  })
+})
+
+describe('lisbonDateOf', () => {
+  it('gives the calendar date in Lisbon, not in UTC', () => {
+    expect(lisbonDateOf(new Date('2026-10-07T22:59:59Z'))).toBe('2026-10-07')
+    // 23:00 UTC in summer is midnight in Lisbon.
+    expect(lisbonDateOf(new Date('2026-10-07T23:00:00Z'))).toBe('2026-10-08')
+    expect(lisbonDateOf(new Date('2026-01-15T23:30:00Z'))).toBe('2026-01-15')
+  })
+})
+
+describe('lisbonDailyInstant', () => {
+  it('gives the instant of that time of day on the Lisbon day of "now"', () => {
+    expect(
+      lisbonDailyInstant(new Date('2026-10-08T12:00:00Z'), '06:30').toISOString()
+    ).toBe('2026-10-08T05:30:00.000Z')
+    expect(
+      lisbonDailyInstant(new Date('2026-01-15T12:00:00Z'), '06:30').toISOString()
+    ).toBe('2026-01-15T06:30:00.000Z')
+  })
+
+  it('refuses something that is not a time of day', () => {
+    expect(() => lisbonDailyInstant(new Date(), '25:00')).toThrow(RangeError)
   })
 })

@@ -39,6 +39,10 @@ export class ApiExceptionFilter implements ExceptionFilter {
       response.setHeader('WWW-Authenticate', 'Bearer')
     }
 
+    if (exception instanceof ApiError && exception.retryAfterSeconds !== null) {
+      response.setHeader('Retry-After', String(exception.retryAfterSeconds))
+    }
+
     const body: ApiErrorBody = { error: { code, message }, requestId }
     response.status(status).json(body)
   }

@@ -24,6 +24,8 @@ Pharma Hub is built with NestJS, Prisma and PostgreSQL and runs on Railway.
   transaction, which `PrismaService.withStore` does. Covered by integration tests.
 - The API and the workers run as separate Railway services from the same repository, so
   the separation of queues between modules (decision 0002) also holds at process level.
+  (Not done for the KuantoKusta collection: its worker runs inside the service. See
+  decision 0023.)
 - The master key that encrypts credentials is a Railway variable of the service, never a
   value in the database or the repository.
 - Page reads leave from Railway's network, not from the stores' servers.

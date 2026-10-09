@@ -1,9 +1,10 @@
 # Security
 
-Status: the database-level protections, plugin tokens, credential encryption and the
-Seller API client are built and tested. The admin sign-in is designed and not built yet.
-An independent review of the code was done on 2026-10-08; what it found and what was
-done about it is at the end. Last updated 2026-10-08.
+Status: the database-level protections, plugin tokens, credential encryption, the
+Seller API client and the price collection are built and tested. The admin sign-in is
+designed and not built yet. Each step was reviewed by a second pass that had not written
+it; what the reviews found and what was done about it is at the end.
+Last updated 2026-10-08.
 
 ## What is being protected
 
@@ -50,7 +51,7 @@ be on `kuantokusta.pt`. A test fails if any request other than that GET is sent.
 ### The product page URL
 
 The Seller API returns, for each offer, the URL of its product page on KuantoKusta. The
-price collection will fetch that URL, so it is the one field through which a faulty or
+price collection fetches that page, so it is the one field through which a faulty or
 hostile API answer could make the hub request an arbitrary address.
 
 Only a plain product page is accepted: `https://www.kuantokusta.pt/p/<id>/<slug>`, with
@@ -115,9 +116,53 @@ People sign in with Google (decision 0008). There are no passwords in the hub.
 
 ### Reading third-party pages
 
-The KuantoKusta collector parses HTML from a site the project does not control. The
-embedded JSON is treated as untrusted input: it is parsed, mapped to a fixed set of
-fields, and stored. Nothing from it is executed or used to build URLs to fetch.
+The collection requests pages from a site the project does not control, and reads what
+comes back. Both directions are treated as hostile.
+
+Where the hub can be made to go:
+
+- The host of every request comes from the configuration, never from data. A product
+  URL contributes its path only, after being checked again with the strict rule above.
+  In production the configured site must be on `kuantokusta.pt`, over https.
+- A redirect is never followed blindly. One hop is followed, and only to the same
+  product id on the same site, with no query string. `robots.txt` redirects are not
+  followed at all.
+- Only two kinds of address are ever requested: `/robots.txt` and `/p/<id>/<slug>`.
+- The request carries a `User-Agent` and an `Accept` header and nothing else: no
+  cookie, no token, no key.
+
+What comes back:
+
+- A page is read up to 4 MB and for at most 20 seconds; `robots.txt` up to 512 KB.
+- The embedded JSON is found by plain text search and parsed; each entry is mapped to a
+  fixed set of fields with bounded text, bounded prices and a bounded number of
+  entries. Nothing from it is executed or used to build an address to fetch.
+- No part of the reading uses a pattern whose cost can grow faster than the page. The
+  first version did (a page of 160 KB built for it took 3 seconds, and a page can be
+  4 MB); the review found it. The service has one thread, so a slow pattern stops
+  every store's requests.
+- `robots.txt` is matched with a small linear algorithm, not with patterns built from
+  the file. A file that cannot be read whole, or that is a web page, allows nothing.
+- A store name or seller number read from a page is stored only if it has the shape of
+  one, and is quoted when logged.
+
+What a store's token can make the hub do:
+
+- `prices:refresh` can ask for a collection. It cannot choose what is read: the pages
+  are those of the store's own offers, as KuantoKusta's API lists them.
+- Asking twice returns the same collection. After one ends there is a wait (15 minutes;
+  an hour after a refusal by the website), so a stolen token cannot make the hub knock
+  on the website again and again.
+- A refusal by the website keeps every store away for 30 minutes (decision 0026).
+
+Shared readings:
+
+- `kk_page_snapshots` is shared by every store, on purpose: it is public data. A store
+  reads it only through its own comparisons. It records what a page showed, not who
+  asked.
+- Which store on a page is the hub's is worked out from prices (decision 0025). Two
+  stores of the hub can never be given the same identity; the second one is told only
+  "not recognised".
 
 ### Every answer
 
@@ -150,6 +195,24 @@ fields, and stored. Nothing from it is executed or used to build URLs to fetch.
   own, and an operator command is a separate process. The handling of KuantoKusta's own
   429 answer is the safety net.
 - There is no limit yet on how many requests a token, or an address, may make.
+- One worker serves every store, one collection at a time. A store with a very large
+  catalogue delays the others; the only bound is the six hours a collection may take.
+- The first store to be "recognised" under a name on KuantoKusta keeps it. A store
+  whose prices equal another store's page prices on most of its products, and that is
+  set up first, would take that store's identity; the other would then need an operator
+  (`kk:configure` on both). Stores are set up by the operator, one by one, and
+  `kk:status` shows what was recognised.
+- A product's page address is shared by the stores that sell it, and the last copy of
+  offers sets its slug (`architecture.md`). If two stores' answers carried different
+  slugs, and the website answered a wrong slug with 404 instead of a redirect, the
+  other store would get "page not found" for up to two hours.
+- The waits after a refusal are counted from rows in the database, so they survive a
+  restart. The pause between two pages is in the worker's memory: after a restart the
+  first page is read without waiting for the previous one.
+- A second copy of the service that keeps running after its collection was taken over
+  could still store a page reading or a comparison before it notices (its next write of
+  progress is refused, and it stops). Comparisons are one per offer and collection, so
+  nothing is duplicated.
 - Until the admin API exists, creating stores and tokens needs shell access to the
   service, and the audit log records "the command line", not a person (decision 0020).
 - On Railway the owner's database connection is present in the running service's
@@ -178,3 +241,26 @@ store's data was found. What it did find:
 | The shared product row takes its name from the last store that wrote it | Accepted and documented in `architecture.md` |
 | No seller identity check; in-memory limits; no request throttling; no re-encryption command | Listed under "Limits of this design" and in `open-questions.md` |
 
+## Independent review of the price collection, 2026-10-08
+
+Two reviews of step 2 by passes that had not written it: one for security, one for what
+goes wrong in production. No way for one store to read or change another's data, no way
+to make the hub request another site, and no injection was found. What they did find:
+
+| Finding | Done |
+|---|---|
+| Two patterns used to read a page could take minutes on a page built for it, stopping the whole service | Fixed: plain text search and bounded patterns, with tests on 4 MB pages |
+| A competitor's absurd price, or a list of tens of thousands of entries, overflowed a database column and failed the whole comparison, for every store selling that product | Fixed: prices and list length are bounded when the page is read |
+| `robots.txt` answering 429 was taken as "try later" and could be asked again a minute after | Fixed: 429 is a refusal; failures that come from the website wait an hour |
+| After a refusal, another store's collection could go to the website right away | Fixed: 30 minutes without any request, for all stores |
+| `robots.txt`: rules after line 5000 and over-long patterns were dropped; a file with old Mac line endings was read as one line; a web page was read as "no rules"; an agent name that is only part of the hub's could select a more permissive group | Fixed: see `domain/robots.ts` and its tests |
+| One second without the database failed a collection of an hour for good | Fixed: it is left to be taken up again (decision 0024) |
+| The database pool was closed before the worker put its collection back | The order was changed and is now tested with the real application. Before the change the test also passed, because the database client reconnects by itself; the pool was then left open |
+| A site that changed its pages was read to the last page, and the result called "partial" | Fixed: stops after ten such pages; a collection with no usable page is "failed" |
+| No limit on how long a collection may take | Fixed: six hours |
+| A reading made by an older parser could be reused after the parser was fixed | Fixed |
+| The name of who asked for a collection could carry control characters to an operator's terminal | Fixed: refused by the route, stripped by the service |
+| A store name from a page was logged before being checked | Fixed: quoted |
+| An error in one store stopped the daily clock for the stores after it | Fixed |
+| Nothing deletes old readings; no alert on a failed collection, on disk or on memory | Not built. Listed in `operations.md` and `open-questions.md` |
+| One large store delays the others; identity can be taken by the first to arrive; shared product address | Accepted for version 1 (one store). Listed under "Limits of this design" |

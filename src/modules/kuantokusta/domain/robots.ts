@@ -18,15 +18,22 @@ export interface RobotsGroup {
   crawlDelaySeconds: number | null
 }
 
-const MAX_LINES = 5000
+/** A file with more lines than this is not read at all: see `robotsLineCount`. */
+export const ROBOTS_MAX_LINES = 20_000
 const MAX_PATTERN_LENGTH = 500
+const LINE_BREAK = /\r\n|\r|\n/
+
+/** How many lines the file has, to refuse one too long to be read whole. */
+export function robotsLineCount(text: string): number {
+  return text.split(LINE_BREAK).length
+}
 
 export function parseRobots(text: string): RobotsGroup[] {
   const groups: RobotsGroup[] = []
   let current: RobotsGroup | null = null
   let previousWasAgent = false
 
-  for (const rawLine of text.split(/\r?\n/).slice(0, MAX_LINES)) {
+  for (const rawLine of text.split(LINE_BREAK).slice(0, ROBOTS_MAX_LINES)) {
     const line = rawLine.replace(/#.*/, '').trim()
     const separator = line.indexOf(':')
     if (separator <= 0) continue
@@ -46,8 +53,13 @@ export function parseRobots(text: string): RobotsGroup[] {
     previousWasAgent = false
     if (!current) continue
 
-    if ((key === 'allow' || key === 'disallow') && value && value.length <= MAX_PATTERN_LENGTH) {
-      current.rules.push({ allow: key === 'allow', pattern: value })
+    if (key === 'disallow' && value) {
+      // Cut to a bounded length. A shorter pattern forbids more, never
+      // less, so cutting can only make the hub more careful.
+      current.rules.push({ allow: false, pattern: value.slice(0, MAX_PATTERN_LENGTH) })
+    } else if (key === 'allow' && value && value.length <= MAX_PATTERN_LENGTH) {
+      // An over-long Allow is left out: it would permit, so it is not guessed.
+      current.rules.push({ allow: true, pattern: value })
     } else if (key === 'crawl-delay') {
       const seconds = Number(value)
       if (Number.isFinite(seconds) && seconds >= 0) current.crawlDelaySeconds = seconds
@@ -63,15 +75,20 @@ export function parseRobots(text: string): RobotsGroup[] {
  * that token is compared with the file's agent names, so a contact address in the
  * User-Agent cannot accidentally match a short name on a ban list.
  *
- * The longest matching pattern wins; on a tie, Allow wins. No matching rule means allowed.
+ * Within a group the longest matching pattern wins; on a tie, Allow wins. No matching
+ * rule means allowed. Every group that applies must allow the path (see `groupsFor`).
  */
 export function isPathAllowed(
   groups: readonly RobotsGroup[],
   clientName: string,
   path: string
 ): boolean {
+  return groupsFor(groups, clientName).every((set) => allowedBy(set, path))
+}
+
+function allowedBy(groups: readonly RobotsGroup[], path: string): boolean {
   let best: RobotsRule | null = null
-  for (const rule of groupsFor(groups, clientName).flatMap((group) => group.rules)) {
+  for (const rule of groups.flatMap((group) => group.rules)) {
     if (!matches(rule.pattern, path)) continue
     const longer = !best || rule.pattern.length > best.pattern.length
     const tieWonByAllow = best && rule.pattern.length === best.pattern.length && rule.allow
@@ -82,16 +99,35 @@ export function isPathAllowed(
 
 /** The largest Crawl-delay that applies to the client, or 0 when the file sets none. */
 export function crawlDelaySeconds(groups: readonly RobotsGroup[], clientName: string): number {
-  return Math.max(0, ...groupsFor(groups, clientName).map((group) => group.crawlDelaySeconds ?? 0))
+  return Math.max(
+    0,
+    ...groupsFor(groups, clientName)
+      .flat()
+      .map((group) => group.crawlDelaySeconds ?? 0)
+  )
 }
 
-/** Groups naming this client specifically, or else the wildcard groups. */
-function groupsFor(groups: readonly RobotsGroup[], clientName: string): RobotsGroup[] {
+/**
+ * The sets of groups the client must obey.
+ *
+ * Groups that name the client exactly replace the wildcard groups, as the standard says.
+ * A group whose agent name is only PART of the client's name (the file says "doc", the
+ * client is "DocFetcher") may or may not be meant for it. The hub then obeys both that
+ * group and the wildcard groups: whichever reading is right, it never reads a path
+ * either of them forbids.
+ */
+function groupsFor(groups: readonly RobotsGroup[], clientName: string): RobotsGroup[][] {
   const name = clientName.trim().toLowerCase()
-  const specific = groups.filter((group) =>
-    group.agents.some((agent) => agent !== '*' && agent !== '' && name.includes(agent))
+  const named = (agent: string) => agent !== '*' && agent !== ''
+  const wildcard = groups.filter((group) => group.agents.includes('*'))
+
+  const exact = groups.filter((group) => group.agents.includes(name))
+  if (exact.length > 0) return [exact]
+
+  const partial = groups.filter((group) =>
+    group.agents.some((agent) => named(agent) && name.includes(agent))
   )
-  return specific.length > 0 ? specific : groups.filter((group) => group.agents.includes('*'))
+  return partial.length > 0 ? [partial, wildcard] : [wildcard]
 }
 
 /**
