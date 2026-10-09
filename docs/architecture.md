@@ -1,8 +1,8 @@
 # Architecture
 
 Status: the database, the store isolation, plugin tokens, encrypted credentials, the
-copy of a store's offers and the price collection are built. The report routes, the
-plugin and the admin API are designed and not built yet. Last updated 2026-10-08.
+copy of a store's offers, the price collection and the report routes are built. The
+plugin and the admin API are designed and not built yet. Last updated 2026-10-09.
 
 ## Shape
 

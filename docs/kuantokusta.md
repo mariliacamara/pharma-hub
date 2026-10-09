@@ -371,8 +371,41 @@ Large differences deserve a manual look before acting. In the first full run, 4 
 offers sat on a KuantoKusta page for a different product or variant (a whitening
 toothpaste for a "sensitive" one, a wrist monitor for an arm monitor, a wash gel for an
 ointment, a "Protein" drink for an "Energy" one), and others showed gaps that suggest a
-different pack size (a box of 10 at 27.89 EUR against 1.75 EUR). The report should flag
-any difference of 50% or more, and the plugin should let a user mark a link as wrong.
+different pack size (a box of 10 at 27.89 EUR against 1.75 EUR). The report flags any
+difference of 50% or more as `checkLink` (decision 0030), and the plugin should let a
+user mark a link as wrong.
+
+## The report
+
+Built in step 3. `GET /v1/plugin/kuantokusta/report`, in `controllers/kk-report.controller.ts`
+and `services/report.service.ts`.
+
+- **One row per offer**, with its most recent comparison, whichever collection wrote it
+  (decision 0027). Each row says which collection (`runId`) and when (`comparedAt`). A
+  row older than the most recent collection that ended is `stale`: that collection did
+  not reach the offer. The answer carries that collection (`run`), with its status and
+  error code.
+- **Only active offers by default** (listed and in stock, the ones a collection
+  compares). `state=out_of_stock|delisted|all` shows the others with their last
+  comparison; each row has `offerState` (decision 0028). Offers never compared are not
+  listed.
+- **Derived on read, never stored:** `differencePercent`, `easyAdjust` (with the store's
+  threshold, returned as `easyAdjustCents`), `checkLink` (returned with
+  `checkLinkPercent`) and `totalDifferenceCents`, the difference with shipping.
+- **Filters:** `outcome`, `easyAdjust=true|false`, `checkLink=true|false`. The `summary`
+  counts every offer of the chosen `state` by outcome, easy adjust, link check and
+  stale, whatever the other filters.
+- **Pages** of up to 200 rows, in the order of the offers, with `after` set to the
+  previous `nextCursor`, like `GET /offers`. The plugin sorts.
+
+Also:
+
+- `GET /v1/plugin/kuantokusta/offers/{id}/history`: every comparison of one offer, newest
+  first, in pages (`before` = the previous `nextCursor`).
+- `GET` and `PUT /v1/plugin/kuantokusta/settings/easy-adjust`: the threshold in cents.
+  Changing it needs `prices:refresh` (decision 0029) and is recorded in the audit log.
+  Before the first collection the store has no settings yet: reading answers the
+  default (10) and changing answers 409 `kk_settings_missing`.
 
 ## Timing
 

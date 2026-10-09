@@ -6,14 +6,14 @@ is a module; all modules share one core.
 **Scope of version 1: one store (Zincomed) and one integration (KuantoKusta).**
 Farmácia Nova Porto and the 4DPharma integration are deferred (decision 0013).
 
-## Status (2026-10-08)
+## Status (2026-10-09)
 
 | Step | State |
 |---|---|
 | Foundation: database, isolation between stores, KuantoKusta rules | Built, deployed on Railway |
 | 1. Plugin tokens, encrypted KuantoKusta key, copy of the store's offers | Built, deployed. First real copy on 2026-10-08: 346 offers |
 | 2. Collection of competitor prices: on request, and daily when switched on | Built. Not yet run against the real website from the service |
-| 3. Routes for the price report; the WordPress plugin | Not built |
+| 3. Routes for the price report; the WordPress plugin | Report routes built (decisions 0027 to 0030). The plugin is not built |
 | 4. Admin API with Google sign-in; the panel | Not built |
 
 Built on [`luas10c/boilerplate-nestjs-swc`](https://github.com/luas10c/boilerplate-nestjs-swc)
@@ -27,7 +27,7 @@ at commit `593e139`, with the corrections listed in decision 0018.
 | `api-tokens` | Tokens that identify a store's plugin | Built |
 | `credentials` | Each store's keys for external systems, encrypted | Built |
 | `audit` | Append-only record of sensitive actions | Built |
-| `kuantokusta` | Compare each store's prices with the lowest price on KuantoKusta | Offers copy and price collection built; the report routes not yet |
+| `kuantokusta` | Compare each store's prices with the lowest price on KuantoKusta | Offers copy, price collection and report routes built |
 | `health` | `/health/live` and `/health/ready` | Built |
 | `fourdpharma` | Integration with 4DPharma | Deferred. Not designed |
 
@@ -44,6 +44,10 @@ checks. The store is always the one the token belongs to; no route accepts a sto
 | `POST /v1/plugin/kuantokusta/runs` | `prices:refresh` | Asks for a new collection of competitor prices. Answers at once; the collection takes minutes |
 | `GET /v1/plugin/kuantokusta/runs/{id}` | `prices:read` | How far a collection is, how it ended, and how many offers fell in each situation |
 | `GET /v1/plugin/kuantokusta/runs/latest`, `GET /v1/plugin/kuantokusta/runs` | `prices:read` | The most recent collection; the latest ones |
+| `GET /v1/plugin/kuantokusta/report` | `prices:read` | The price report: the latest comparison of each offer, with percentage, "easy adjust" and "check the link", in pages, with filters and a summary |
+| `GET /v1/plugin/kuantokusta/offers/{id}/history` | `prices:read` | Every comparison of one offer, newest first |
+| `GET /v1/plugin/kuantokusta/settings/easy-adjust` | `prices:read` | The store's "easy adjust" threshold, in cents |
+| `PUT /v1/plugin/kuantokusta/settings/easy-adjust` | `prices:refresh` | Changes it. Takes effect on the next read; recorded in the audit log |
 | `GET /health/live`, `GET /health/ready` | none | For the host |
 
 Errors always have the same shape:
