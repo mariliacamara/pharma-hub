@@ -57,6 +57,7 @@ outside production.
 | `docs/architecture.md` | Components, request flows, tenant isolation, build order |
 | `docs/security.md` | How secrets and access are protected, and the limits of that protection |
 | `docs/kuantokusta.md` | Everything learned about KuantoKusta: API, pages, rules, data quirks |
+| `docs/new-environment.md` | Checklist to set up a new environment on Railway, from nothing to the first collection |
 | `docs/operations.md` | Deploying on Railway, the operator commands, what to do when something breaks |
 | `docs/decisions/` | One short record per decision: what, why, what was rejected |
 | `docs/open-questions.md` | What is undecided or unverified |

@@ -13,31 +13,11 @@ they are the ones most likely to be made again.
 
 ### Once per environment
 
-1. Create the project with a **PostgreSQL** database, then add the service from the
-   GitHub repository. Railway finds the `Dockerfile` by itself.
-2. Create the role the service runs as. The role Railway creates (`postgres`) is a
-   superuser, and the service refuses to start with it (decision 0016).
-   - In the database's settings, enable public networking and copy `DATABASE_PUBLIC_URL`.
-   - Generate a password of letters and digits only: `openssl rand -hex 24`.
-   - From the repository folder:
-     `psql "<DATABASE_PUBLIC_URL>" -v app_password='<password>' -f db/roles.sql`
-   - Disable public networking again.
-3. Generate the master key: `openssl rand -base64 32`. **Keep a copy outside Railway**
-   (a password manager). Without this exact value, the stored KuantoKusta keys cannot be
-   read again and each store has to enter its key once more.
-4. Set the service's variables:
-
-   | Variable | Value |
-   |---|---|
-   | `DATABASE_URL` | `postgresql://pharma_hub_app:<password>@postgres.railway.internal:5432/railway` |
-   | `DATABASE_MIGRATION_URL` | The database's own `DATABASE_URL` (the `postgres` user, internal address) |
-   | `CREDENTIALS_MASTER_KEY` | `1:<the 44 characters from openssl>` |
-
-   The host, port and database name above are the ones of the first deploy. Confirm
-   them in the database's variables (`PGHOST`, `PGPORT`, `PGDATABASE`).
-
-5. In the service's settings: **Pre-deploy Command** `npx prisma migrate deploy`,
-   **Healthcheck Path** `/health/ready`.
+The step-by-step checklist, from the empty Railway project to the first price
+collection, is in [`new-environment.md`](new-environment.md). In short: a PostgreSQL
+database, the `pharma_hub_app` role (`db/roles.sql`), three variables (`DATABASE_URL`,
+`DATABASE_MIGRATION_URL`, `CREDENTIALS_MASTER_KEY`), the pre-deploy command
+`npx prisma migrate deploy` and the health check path `/health/ready`.
 
 ### What went wrong the first time
 
