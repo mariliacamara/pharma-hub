@@ -1,8 +1,8 @@
 # Architecture
 
-Status: the database, the store isolation, plugin tokens, encrypted credentials and the
-copy of a store's offers are built. The price collection, the report routes and the
-admin API are designed and not built yet. Last updated 2026-10-08.
+Status: the database, the store isolation, plugin tokens, encrypted credentials, the
+copy of a store's offers and the price collection are built. The report routes, the
+plugin and the admin API are designed and not built yet. Last updated 2026-10-08.
 
 ## Shape
 
@@ -23,7 +23,9 @@ Admin panel ──────┤  ┌──────────────
 
 Modules share code and database but **not queues or workers**. The KuantoKusta
 collection is fragile (it reads a third-party site that can block it at any time), so a
-stuck or blocked price collection must never delay the jobs of a future module.
+stuck or blocked price collection must never delay the jobs of a future module. The
+KuantoKusta module has its own worker, which runs inside the service and only carries
+out KuantoKusta collections (decision 0023).
 
 ## Responsibilities
 
@@ -94,31 +96,54 @@ it is marked public, so a route cannot be exposed by forgetting the check (decis
 4. The same answer leads to the same rows, so running it again is safe. Two runs for the
    same store do not interleave.
 
-Today this runs from an operator command. In the next step it becomes the first part of
-the scheduled collection below.
+It runs from an operator command (`kk:sync-offers`) and as the first part of every
+collection.
 
-### Scheduled collection (KuantoKusta)
+### Price collection (built)
 
-1. A daily schedule, defined in Portugal time, walks `stores` and creates one `job_runs` row per store that has a
-   KuantoKusta credential. Stores without one are skipped.
-2. The job loads that store's key from `store_credentials`, syncs the store's offers from
-   the Seller API, then reads the product page of each active offer.
-3. Each page reading is saved as a `kk_page_snapshots` row; each offer gets a
-   `kk_price_comparisons` row computed from it.
+```
+plugin / operator / daily clock          worker (inside the service)
+          │                                        │
+          ▼                                        ▼
+   a row in job_runs  ──── waits ────▶  1. copy the store's offers (Seller API)
+   (queued)                             2. reuse readings of the last two hours
+                                        3. robots.txt, then one page every 5 s,
+                                           each reading stored as it is made
+                                        4. recognise the store on the pages
+                                        5. one comparison per offer
+                                                   │
+   plugin polls the row  ◀──── progress, then ─────┘
+   ("40 of 185")               succeeded / partial / blocked / failed
+```
 
-### Regenerate (manual)
+1. **Asking.** `POST /v1/plugin/kuantokusta/runs`, the `kk:collect` command, or the
+   daily clock create a row in `job_runs`. If the store already has one waiting or
+   running, that one is returned instead; a unique index in the database guarantees it,
+   also for two requests at the same instant.
+2. **Carrying out.** One worker takes the oldest waiting row of any store, and only when
+   no collection of any store is running. The pause between pages is a promise to the
+   website, so it holds for the whole hub, not per store.
+3. **Following.** The row carries the progress. The plugin reads it with
+   `GET /v1/plugin/kuantokusta/runs/{id}`.
+4. **Interruptions.** Each reading is stored at once and reused, the worker writes a
+   sign of life into the row, and a collection without one is taken up again
+   (decision 0024).
 
-1. The plugin (or panel) asks for a new run.
-2. If a full run is already queued or running for the store, the hub returns that run
-   instead of creating another. The database enforces this with a unique partial index.
-3. Otherwise a run is created, subject to a minimum interval between manual runs.
-4. The caller polls the run for progress ("40 of 185").
+The clock is off unless `KK_COLLECTION_DAILY_AT` is set (decision 0026). The steps of
+one collection, its outcomes and its codes are in `kuantokusta.md`, "The collection".
 
-A single-offer refresh reads one page and may run in parallel with others.
+A single-offer refresh (one page, in parallel with others) is designed and not built.
 
 Regenerating shows what competitors did. It does not show the effect of a price the store
 just changed, because KuantoKusta only displays the new price after it re-imports the
 store's catalogue.
+
+### Stopping the service
+
+On SIGTERM the hooks run in this order: the worker and the clock stop first (the worker
+puts its collection back in the queue), then the HTTP server stops, and the database
+pool is closed last. `tests/integration/kk-shutdown.int.spec.ts` closes the real
+application in the middle of a collection and checks the row afterwards.
 
 ## Tenant isolation
 
@@ -141,7 +166,8 @@ admin picks a store, the hub checks membership, and the query runs inside that s
 
 Shared tables without RLS, on purpose: `stores` and `api_tokens` (the token lookup happens
 before the store is known), `kk_products` and `kk_page_snapshots` (public data, shared so
-one page reading serves every store that sells the product). Code that touches
+one page reading serves every store that sells the product). A reading says nothing
+about which store caused it. Code that touches
 `api_tokens` for anything other than the lookup filters by store itself.
 
 `kk_products` is written by every store's copy of offers: the last one to write sets the
@@ -153,7 +179,7 @@ only. It must not be shown to a store as if that store had written it.
 
 | Layer | Table | Lifetime |
 |---|---|---|
-| Raw | `kk_page_snapshots`: every store and price the page showed | 90 days |
+| Raw | `kk_page_snapshots`: every store and price the page showed | Meant to be 90 days. Nothing deletes them yet (`operations.md`) |
 | Computed | `kk_price_comparisons`: store price, lowest price, cheapest store, difference, position | Kept |
 
 Keeping the raw layer allows recalculating when a rule changes without reading the site

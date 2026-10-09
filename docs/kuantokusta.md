@@ -84,7 +84,9 @@ the page and treats `isTopBox` as information only.
 
 ## Copying the store's offers into the hub
 
-Built in step 1. `modules/kuantokusta/domain/seller-offer.ts` reads each item;
+Built in step 1. First real copy on 2026-10-08, from the service on Railway with
+Zincomed's key: 346 offers returned, 346 stored, none skipped, 45 without SKU and 7
+without EAN. `modules/kuantokusta/domain/seller-offer.ts` reads each item;
 `offers-sync.service.ts` writes the result.
 
 ### Reading an item
@@ -190,7 +192,9 @@ props.pageProps.basePage.product.offers[]
 ```
 
 Fields used, per store: `storeName`, `storeSlug`, `sellerId`, `price`,
-`shipping.minimumPrice`, `isHighlighted`, `filters.isMarketplace`. Also present:
+`shipping.minimumPrice`, `isHighlighted`, `filters.isMarketplace`. An entry with a price
+above 1,000,000 EUR is left out, and a list of more than 1,000 entries is not accepted
+as a product page. Also present:
 `productId` (numeric, the id in the URL), `oldPrice`, `lastCheckedAt`, `rating`, `badges`,
 `businessRules`.
 
@@ -198,15 +202,21 @@ All 20 sampled pages had this list, and also a JSON-LD block with the lowest pri
 
 ### Collection rules
 
-1. Read `robots.txt` first and skip any URL it disallows.
+1. Read `robots.txt` first and skip any URL it disallows. If the rules cannot be
+   obtained, read nothing.
 2. Use `productUrl` exactly as the API returned it. Add no parameters.
 3. Read the HTML page only. Never call the site's `/api/` endpoints.
 4. Identify the client honestly in the `User-Agent`. Do not imitate a browser.
 5. One request at a time, about 5 seconds apart, with jitter.
-6. Stop the run after 3 consecutive blocked responses, and mark it `blocked`.
+6. Stop the run after 3 consecutive blocked responses, and mark it `blocked`. Never
+   retry a refused page. After a block, no store's collection goes to the site for 30
+   minutes.
 7. If the offers path is missing, record `no_offer_list`. Never store an empty result as
    if it were real: a missing path means the site changed.
 8. Read only offers with stock, about 185 pages a day for Zincomed (roughly 20 minutes).
+
+These rules are enforced by the code described in "The collection" below, and each has a
+test that fails when the rule is removed (decision 0026).
 
 ### What happened in testing
 
@@ -222,6 +232,94 @@ All 20 sampled pages had this list, and also a JSON-LD block with the lowest pri
 
 The collection is fragile. Expect to adjust it, and keep the parser and the HTTP client in
 one place.
+
+## The collection
+
+Built in step 2. Tested against a fake Seller API and a fake website on the test
+machine. **Not yet run against the real website from the service**: the numbers under
+"What happened in testing" come from the feasibility scripts of 2026-10-08.
+
+Checked end to end on 2026-10-08 with the built service and both fakes: `kk:collect`
+from a second process queued a collection of 7 pages; the service was stopped with
+SIGTERM after 2 pages and put the collection back in the queue; started again, it read
+the other 5, 4 to 6 seconds apart, recognised the store and stored 7 comparisons. No
+page was requested twice, and asking again over HTTP answered 429 with `Retry-After`.
+
+Code: `modules/kuantokusta/services/collection*.ts` and `product-page.client.ts`; the
+pure rules in `domain/page-reading.ts`, `store-identity.ts` and `daily-schedule.ts`.
+
+### What one collection does
+
+1. Copies the store's offers from the Seller API (as above). If that fails, the
+   collection fails and the website is not touched.
+2. Takes the offers that are listed and in stock.
+3. For each, uses a reading of its page made in the last two hours if there is one.
+4. For the rest: reads `robots.txt`, then one page every five seconds, storing each
+   reading as it is made.
+5. Works out which store on the pages is the hub's (decision 0025).
+6. Stores one comparison per offer. An offer whose page could not be read gets a
+   `no_data` row with the store's own price.
+
+A collection is asked for by the plugin (`POST /v1/plugin/kuantokusta/runs`), by an
+operator (`kk:collect`) or by the daily schedule, and carried out by the one worker
+inside the service (decision 0023). The plugin follows it with
+`GET /v1/plugin/kuantokusta/runs/{id}`.
+
+### What a page reading can be
+
+| Outcome | Meaning | Used again within two hours? |
+|---|---|---|
+| `ok` | The page came and its list of offers was found (the list may be empty) | Yes |
+| `not_found` | 404 or 410: the page no longer exists | Yes |
+| `no_offer_list` | The page came, but the offers are not where expected | Yes |
+| `blocked` | 403, 429, or a challenge page whatever its status | No |
+| `http_error` | Any other status, or a redirect that is not to the same product | No |
+| `network_error` | No answer, a timeout (20 s), or a page larger than 4 MB | No |
+
+A reading is reused only if it was made by the current version of the parser
+(`PARSER_VERSION`).
+
+### How a collection ends
+
+| Status | Meaning |
+|---|---|
+| `succeeded` | Every page was read |
+| `partial` | Some pages could not be read; the others were compared |
+| `blocked` | The website refused the hub. See the code |
+| `failed` | See the code |
+
+| Code | Status | Meaning | Website asked? |
+|---|---|---|---|
+| `kk_key_missing`, `kk_key_rejected`, `credential_unreadable` | failed | The store's key | No |
+| `kk_rate_limited`, `kk_unavailable`, `kk_unexpected_response` | failed | The Seller API | No |
+| `robots_refused` | blocked | `robots.txt` answered 401, 403, 429 or a challenge page, or disallows every product page | Only `robots.txt` |
+| `robots_unavailable` | failed | `robots.txt` could not be obtained, or is not a robots.txt | Only `robots.txt` |
+| `crawl_delay_too_long` | failed | `robots.txt` asks for more than 2 minutes between pages | Only `robots.txt` |
+| `blocked_by_site` | blocked | Three pages refused in a row, now or in the last 30 minutes for any store | Yes, or not at all |
+| `page_layout_changed` | failed | Ten pages in a row without the list of offers: the parser needs updating | Yes |
+| `site_unavailable` | failed | Ten pages in a row failed | Yes |
+| `no_page_read` | failed | Every page was tried and none could be used | Yes |
+| `run_too_long` | failed | Still reading pages after six hours | Yes |
+| `store_identity_unknown` | failed | The hub could not tell which store on the pages is its own. Set it with `kk:configure` | Yes |
+| `abandoned` | failed | The worker vanished three times while carrying it out | Maybe |
+| `internal_error` | failed | A bug, three times. The detail is in the log | Maybe |
+
+In every case the pages that were read are kept, and compared if the store is known.
+
+### Waiting before asking again
+
+Asking while a collection is waiting or running returns that collection. After one ends,
+a person has to wait: 15 minutes after a good one, an hour after a refusal or a failure
+that came from the website, one minute after any other failure. The schedule and an
+operator with `--ignore-wait` do not wait.
+
+### Not built
+
+- A refresh of a single offer.
+- Deleting old readings. `kk_page_snapshots` grows by one row per page read
+  (`operations.md` has the query to trim it by hand).
+- Reading a page again when its address changed: the hub follows the redirect, but keeps
+  the old address until the next copy of the offers brings the new one.
 
 ## First full result (Zincomed, 2026-10-08)
 
@@ -245,8 +343,9 @@ may be a conditional or pick-up price, so this is an indication, not a verdict.
 
 All arithmetic in integer cents.
 
-- **Store's own offer:** matched by `storeSlug` (later by `sellerId`), not by searching for
-  the store name in the page text.
+- **Store's own offer:** matched by `sellerId` once it is known, otherwise by
+  `storeSlug`; never by searching for the store name in the page text. The hub works
+  out both by itself (decision 0025).
 - **Store price:** the price on the page when the store is listed there, otherwise the
   Seller API price.
 - **Lowest price:** the minimum among the *other* stores.

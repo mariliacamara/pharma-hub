@@ -102,7 +102,8 @@ Optional, for the price collection. Leave them out unless there is a reason:
 - [ ] Deploy. In the **Deploy Logs** (not the Build Logs) look for:
       - `No pending migrations to apply` or a list of applied migrations;
       - `Database connection ready; role is subject to Row Level Security`;
-      - `Seller API at seller.kuantokusta.pt`.
+      - `Seller API at seller.kuantokusta.pt`;
+      - `Collection worker started` and `Daily collection is off`.
 - [ ] Give the service a public address (the service's networking settings). Use the
       port Railway suggests. Which port was chosen on the first deploy was not written
       down; the service listens on the `PORT` Railway gives it, and on 7000 without one.

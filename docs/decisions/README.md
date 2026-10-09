@@ -29,7 +29,7 @@ Template:
 | [0008](0008-admin-api-with-google-sign-in.md) | Admin API in the core from the start; people sign in with Google |
 | [0009](0009-name-pharma-hub.md) | The service is named Pharma Hub |
 | [0010](0010-panel-for-owner-and-clients.md) | The panel is used by the owner and by clients, each client limited to their store |
-| [0011](0011-nestjs-prisma-postgresql-on-railway.md) | NestJS, Prisma and PostgreSQL, hosted on Railway |
+| [0011](0011-nestjs-prisma-postgresql-on-railway.md) | NestJS, Prisma and PostgreSQL, hosted on Railway (the separate worker service: see 0023) |
 | [0012](0012-portugal-time.md) | Portugal time everywhere a person or a schedule sees a time |
 | [0013](0013-version-1-zincomed-and-kuantokusta-only.md) | Version 1 covers Zincomed and KuantoKusta only |
 | [0014](0014-technical-name-and-client-facing-name.md) | A neutral technical name, and a client-facing name per store |
@@ -41,3 +41,7 @@ Template:
 | [0020](0020-operator-commands-until-the-admin-api.md) | Operator commands, until the admin API exists |
 | [0021](0021-database-sessions-run-in-utc.md) | Every database session runs in UTC |
 | [0022](0022-routes-are-closed-unless-marked-public.md) | Every route is closed unless it is marked public |
+| [0023](0023-the-collection-queue-is-a-table-and-one-worker.md) | The collection queue is the `job_runs` table, with one worker inside the service |
+| [0024](0024-a-collection-survives-being-interrupted.md) | A collection survives being interrupted |
+| [0025](0025-the-store-is-recognised-by-its-own-prices.md) | The store is recognised on the pages by its own prices |
+| [0026](0026-refusals-stop-everyone-and-the-schedule-is-off-by-default.md) | A refusal by the website stops every store, and the daily schedule is off until agreed |

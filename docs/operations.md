@@ -4,7 +4,8 @@ How to deploy the service, run the operator commands, and find out what happened
 something goes wrong. Last updated 2026-10-08.
 
 There are no metrics or alerts yet. What exists is the log (one JSON object per line in
-production) and the database.
+production) and the database. Nobody is told when a collection fails: look at
+`kk:runs`, or at the plugin, which shows the status of the latest one.
 
 ## Deploying on Railway
 
@@ -42,16 +43,16 @@ under the database's Config tab; it was not tried here.
 
 ## Operator commands
 
-They run inside the service's container (decision 0020):
+They run inside the service's container (decision 0020). On Railway: the **Console**
+tab of the service (used on 2026-10-08 for everything below up to `kk:sync-offers`).
 
 ```bash
-railway ssh                                   # a shell in the running service
-node dist/cli.js                              # lists the commands
-railway ssh -- node dist/cli.js store:list    # or one command, without a shell
+node dist/cli.js                 # lists the commands
+node dist/cli.js store:list
 ```
 
-(`railway ssh` is described in Railway's documentation and was not tried here. The
-dashboard also shows a Console tab on the service.)
+(`railway ssh`, from Railway's command line, is described in its documentation and was
+not tried here.)
 
 ### Setting up a store
 
@@ -70,6 +71,29 @@ node dist/cli.js token:issue --store zincomed --label "WordPress plugin"
   issue another.
 - A token issued this way has every scope and does not expire, which is what the plugin
   needs. For anything else, pass `--scopes prices:read` and `--expires-in-days`.
+
+### Price collection
+
+```bash
+node dist/cli.js kk:collect --store zincomed     # queues one; the service carries it out
+node dist/cli.js kk:runs --store zincomed        # the latest ones, and how the last ended
+node dist/cli.js kk:status --store zincomed      # key, offers, how the store was recognised
+node dist/cli.js kk:configure --store zincomed --kk-slug zincomed --easy-adjust-cents 10
+```
+
+- `kk:collect` only puts the collection in the queue. The running service picks it up
+  within five seconds and reads one page every five seconds: a few hundred offers take
+  about half an hour. The command returns at once.
+- If one is already waiting or running, the command says so and queues nothing.
+- After a collection ends there is a wait before the next (`kuantokusta.md`). The
+  command says how long. `--ignore-wait` skips it; do not use it after a `blocked` run
+  unless KuantoKusta said the hub may come back.
+- `kk:configure --kk-slug` is only needed when a collection ends as
+  `store_identity_unknown`. The slug is the store's name as it appears in the address of
+  its page on KuantoKusta. `--easy-adjust-cents` sets the "easy adjust" threshold.
+- The daily collection is off unless the variable `KK_COLLECTION_DAILY_AT` is set to a
+  time such as `06:30` (Portugal time), which needs a redeploy. The log says which at
+  start: `Daily collection at 06:30, Portugal time` or `Daily collection is off`.
 
 ### After changing the master key variables
 
@@ -118,6 +142,18 @@ SELECT store_id, count(*) FROM kk_store_offers
  WHERE listing_status = 'listed' AND last_seen_at < now() - interval '2 days'
  GROUP BY 1;
 
+-- Collections of every store, newest first.
+SELECT s.slug, j.status, j.error_code, j.trigger, j.attempts,
+       j.items_ok, j.items_failed, j.items_total,
+       j.queued_at, j.started_at, j.heartbeat_at, j.finished_at
+  FROM job_runs j JOIN stores s ON s.id = j.store_id
+ ORDER BY j.queued_at DESC LIMIT 20;
+
+-- What the last pages read looked like (shared by all stores).
+SELECT outcome, http_status, count(*), max(fetched_at)
+  FROM kk_page_snapshots WHERE fetched_at > now() - interval '1 day'
+ GROUP BY 1, 2 ORDER BY 3 DESC;
+
 -- Which master key version encrypted each stored key.
 SELECT key_version, count(*) FROM store_credentials GROUP BY 1;
 
@@ -136,6 +172,16 @@ SELECT occurred_at, actor_type, actor_label, action, target, details
 | `Offers sync finished store=... fetched=... delisted=... held_back=... skipped=...` | The result. At warning level when something was skipped or held back |
 | `Offers sync failed store=... error=... reason="..."` | Why it failed |
 | `Seller API at seller.kuantokusta.pt` | Which KuantoKusta the service talks to, said once at start |
+| `Collection worker started` | Said once at start. Without it no collection is carried out |
+| `Collection started store=... run=... attempt=N` | The worker took a collection. `attempt` above 1: it was taken up again |
+| `GET /p/<id> ok status=200 ms=...` | Each page read, with its outcome |
+| `Collection finished store=... status=... error=... total=... ok=... failed=...` | The result |
+| `Collection put back in the queue store=... run=...` | The service was asked to stop in the middle of one. Normal on a redeploy |
+| `Abandoned collections store=... failed=N requeued=N` | A collection was found without signs of life and taken up again, or given up |
+| `Collection crashed store=... run=... attempt=N` | Something unexpected, with the cause. It is tried again in about three minutes |
+| `Recognised the store on KuantoKusta store=... slug="..." seller=... matches=N/M` | How the store was found on the pages, the first time |
+| `Could not tell which store is the hub's store=... reason=...` | See `store_identity_unknown` below |
+| `robots.txt unavailable: ...` | Why the rules could not be read |
 | `Database connection lost: ...` | A connection broke and the pool replaced it |
 | `Unhandled error request=...` | A bug. The request id is the one the caller received |
 
@@ -156,3 +202,40 @@ SELECT occurred_at, actor_type, actor_label, action, target, details
 
 A failed copy changes nothing: either every page is read and written in one transaction,
 or nothing is. Running it again is always safe.
+
+## When a collection goes wrong
+
+`kk:runs --store <slug>` shows the status and the code. The codes are explained in
+`kuantokusta.md`, "How a collection ends".
+
+| What you see | Cause | What to do |
+|---|---|---|
+| Stays `queued` | The service is not running, or it is busy with another store's collection | Look for `Collection worker started` in the log. One collection runs at a time for the whole hub |
+| Stays `running`, pages not advancing | The worker died without saying so | Nothing: after three minutes without a sign of life it is taken up again by itself, and the pages already read are not read again |
+| `failed (abandoned)` or `failed (internal_error)` | It was taken up three times and never finished | The log has `Collection crashed` with the cause. `kk:collect --ignore-wait` after fixing it |
+| `blocked (blocked_by_site)` | The website refused three pages in a row | **Do not insist.** No store's collection goes to the website for 30 minutes, and a person cannot ask again for an hour. If it repeats, talk to KuantoKusta before anything else |
+| `blocked (robots_refused)` | `robots.txt` was refused, or disallows product pages for the hub | The same. Open `https://www.kuantokusta.pt/robots.txt` in a browser and compare with `tests/fixtures/robots-kuantokusta.txt` |
+| `failed (robots_unavailable)` | `robots.txt` could not be read, so nothing was | Try in an hour. The log line `robots.txt unavailable` says why |
+| `failed (page_layout_changed)` | Ten pages in a row came without the list of offers | KuantoKusta changed its pages. `modules/kuantokusta/domain/page-offers.ts` needs updating, and `PARSER_VERSION` raised |
+| `failed (site_unavailable)`, `failed (no_page_read)` | The website is failing or slow | Try in an hour |
+| `failed (store_identity_unknown)` | The hub could not tell which store on the pages is its own: fewer than five readable pages, or no store has the hub's prices | `kk:configure --store <slug> --kk-slug <name in KuantoKusta addresses>`, then `kk:collect --ignore-wait`. The pages are not read again |
+| `failed (kk_key_...)`, `failed (kk_unavailable)` | The copy of the offers failed | See the next section |
+| `partial`, with a few pages not read | Some pages failed or no longer exist | Normal. Those offers show "no data" until the next collection |
+| The comparison looks wrong for every product | The store was recognised as the wrong one | `kk:status` shows who it was taken for. Correct with `kk:configure` |
+
+A collection never changes anything on KuantoKusta, and asking for one twice never
+starts two. Running `kk:collect` again is always safe; whether it is polite to the
+website is what the waits are for.
+
+### Old readings are not deleted yet
+
+Every page read adds a row to `kk_page_snapshots` (a few kilobytes). Nothing removes
+them. At one collection a day for one store this is small, but it only grows. Until a
+job does it, delete by hand from time to time, with the owner's connection:
+
+```sql
+DELETE FROM kk_page_snapshots WHERE fetched_at < now() - interval '90 days';
+```
+
+The comparisons computed from those readings are kept; they only lose the link to the
+reading.
