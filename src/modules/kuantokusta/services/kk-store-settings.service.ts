@@ -2,6 +2,8 @@ import { Injectable } from '@nestjs/common'
 
 import { isUniqueViolation } from '#/infra/database/prisma-errors'
 import { PrismaService } from '#/infra/database/prisma.service'
+import { AuditService } from '#/modules/audit/services/audit.service'
+import type { AuditActor } from '#/modules/audit/services/audit.service'
 
 import type { StoreIdentity } from '../domain/comparison'
 
@@ -27,14 +29,31 @@ export class InvalidKkSettingsError extends Error {
   }
 }
 
+/** The store has no KuantoKusta settings yet: its identity is not known. */
+export class KkSettingsMissingError extends Error {
+  constructor() {
+    super(
+      'The store\'s KuantoKusta settings do not exist yet; they are created by '
+      + 'the first collection, or with kk:configure'
+    )
+    this.name = 'KkSettingsMissingError'
+  }
+}
+
 const SLUG = /^[a-z0-9][a-z0-9._-]{0,99}$/
 // What the column holds.
 export const MAX_SELLER_ID = 2_147_483_647
+// The column's default: what a store without settings yet is held to.
+export const DEFAULT_EASY_ADJUST_CENTS = 10
+export const MAX_EASY_ADJUST_CENTS = 100_000
 
 /** A store's settings for the KuantoKusta module. */
 @Injectable()
 export class KkStoreSettingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService
+  ) {}
 
   async get(storeId: string): Promise<KkStoreSettings | null> {
     const row = await this.prisma.withStore(storeId, (tx) =>
@@ -88,22 +107,42 @@ export class KkStoreSettingsService {
     }
   }
 
-  async setEasyAdjust(storeId: string, cents: number): Promise<void> {
-    if (!Number.isInteger(cents) || cents < 0 || cents > 100_000) {
+  /**
+   * Changes the "easy adjust" threshold. The report reads it on every
+   * request, so nothing has to be recalculated. Recorded in the audit log
+   * with the previous value.
+   */
+  async setEasyAdjust(
+    storeId: string,
+    cents: number,
+    actor: AuditActor
+  ): Promise<void> {
+    if (!Number.isInteger(cents) || cents < 0 || cents > MAX_EASY_ADJUST_CENTS) {
       throw new InvalidKkSettingsError(
         'The easy-adjust threshold must be a whole number of cents'
       )
     }
-    const { count } = await this.prisma.withStore(storeId, (tx) =>
-      tx.kk_store_settings.updateMany({
+    await this.prisma.withStore(storeId, async (tx) => {
+      const current = await tx.kk_store_settings.findUnique({
+        where: { store_id: storeId },
+        select: { easy_adjust_cents: true }
+      })
+      // The row is created when the store's identity on KuantoKusta is
+      // known, which the first collection works out by itself.
+      if (!current) {
+        throw new KkSettingsMissingError()
+      }
+      if (current.easy_adjust_cents === cents) return
+      await tx.kk_store_settings.update({
         where: { store_id: storeId },
         data: { easy_adjust_cents: cents, updated_at: new Date() }
       })
-    )
-    if (count === 0) {
-      throw new InvalidKkSettingsError(
-        'Set how the store appears on KuantoKusta first'
-      )
-    }
+      await this.audit.record(tx, {
+        actor,
+        action: 'kk_settings.easy_adjust_changed',
+        storeId,
+        details: { fromCents: current.easy_adjust_cents, toCents: cents }
+      })
+    })
   }
 }

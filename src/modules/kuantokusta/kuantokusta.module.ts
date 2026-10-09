@@ -7,7 +7,9 @@ import { CredentialsModule } from '#/modules/credentials/credentials.module'
 
 import { KkCredentialController } from './controllers/kk-credential.controller'
 import { KkOffersController } from './controllers/kk-offers.controller'
+import { KkReportController } from './controllers/kk-report.controller'
 import { KkRunsController } from './controllers/kk-runs.controller'
+import { KkSettingsController } from './controllers/kk-settings.controller'
 import { CollectionRunsService } from './services/collection-runs.service'
 import { CollectionScheduler } from './services/collection.scheduler'
 import {
@@ -20,6 +22,7 @@ import { KkStoreSettingsService } from './services/kk-store-settings.service'
 import { OffersSyncService } from './services/offers-sync.service'
 import { OffersService } from './services/offers.service'
 import { ProductPageClient } from './services/product-page.client'
+import { ReportService } from './services/report.service'
 import { KkSellerApiClient } from './services/seller-api.client'
 
 @Module({
@@ -27,7 +30,9 @@ import { KkSellerApiClient } from './services/seller-api.client'
   controllers: [
     KkCredentialController,
     KkOffersController,
-    KkRunsController
+    KkReportController,
+    KkRunsController,
+    KkSettingsController
   ],
   providers: [
     {
@@ -81,6 +86,7 @@ import { KkSellerApiClient } from './services/seller-api.client'
     KkStoreSettingsService,
     OffersSyncService,
     OffersService,
+    ReportService,
     CollectionRunsService,
     // Neither starts by itself: main.ts starts them, so the operator
     // commands and the tests never run a second worker by accident.

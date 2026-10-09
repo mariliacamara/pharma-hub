@@ -14,7 +14,8 @@ import type {
 import type { KkCredentialService } from '#/modules/kuantokusta/services/kk-credential.service'
 import {
   InvalidKkSettingsError,
-  KkIdentityTakenError
+  KkIdentityTakenError,
+  KkSettingsMissingError
 } from '#/modules/kuantokusta/services/kk-store-settings.service'
 import type { KkStoreSettingsService } from '#/modules/kuantokusta/services/kk-store-settings.service'
 import type { OffersSyncService } from '#/modules/kuantokusta/services/offers-sync.service'
@@ -444,12 +445,13 @@ export async function runCommand(
           })
         }
         if (easyAdjust !== undefined) {
-          await services.kkSettings.setEasyAdjust(store.id, easyAdjust)
+          await services.kkSettings.setEasyAdjust(store.id, easyAdjust, ACTOR)
         }
       } catch (error) {
         if (
           error instanceof InvalidKkSettingsError
           || error instanceof KkIdentityTakenError
+          || error instanceof KkSettingsMissingError
         ) {
           throw new CheckFailedError(error.message)
         }

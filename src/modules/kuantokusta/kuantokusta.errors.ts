@@ -4,6 +4,10 @@ import { InvalidCredentialError } from '#/modules/credentials/services/credentia
 
 import { RunTooSoonError } from './services/collection-runs.service'
 import { KkKeyAttemptsExceededError } from './services/kk-credential.service'
+import {
+  InvalidKkSettingsError,
+  KkSettingsMissingError
+} from './services/kk-store-settings.service'
 import { KkCredentialMissingError } from './services/offers-sync.service'
 import {
   KkKeyRejectedError,
@@ -71,6 +75,17 @@ export function toApiError(error: unknown): unknown {
       'credential_unreadable',
       'The stored key cannot be read; set it again'
     )
+  }
+  if (error instanceof KkSettingsMissingError) {
+    return new ApiError(
+      409,
+      'kk_settings_missing',
+      'The store\'s KuantoKusta settings are created by its first collection; '
+      + 'run one first'
+    )
+  }
+  if (error instanceof InvalidKkSettingsError) {
+    return new ApiError(400, 'invalid_request', error.message)
   }
   return error
 }

@@ -150,6 +150,8 @@ What a store's token can make the hub do:
 
 - `prices:refresh` can ask for a collection. It cannot choose what is read: the pages
   are those of the store's own offers, as KuantoKusta's API lists them.
+- `prices:refresh` can also change the store's "easy adjust" threshold (decision 0029).
+  It only changes which rows are highlighted, and every change is in the audit log.
 - Asking twice returns the same collection. After one ends there is a wait (15 minutes;
   an hour after a refusal by the website), so a stolen token cannot make the hub knock
   on the website again and again.

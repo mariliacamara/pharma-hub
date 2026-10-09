@@ -45,3 +45,7 @@ Template:
 | [0024](0024-a-collection-survives-being-interrupted.md) | A collection survives being interrupted |
 | [0025](0025-the-store-is-recognised-by-its-own-prices.md) | The store is recognised on the pages by its own prices |
 | [0026](0026-refusals-stop-everyone-and-the-schedule-is-off-by-default.md) | A refusal by the website stops every store, and the daily schedule is off until agreed |
+| [0027](0027-the-report-shows-each-offers-latest-comparison.md) | The report shows each offer's latest comparison, marked stale when it predates the latest collection |
+| [0028](0028-offers-no-longer-compared-are-hidden-by-default.md) | Offers that left the stock or KuantoKusta are hidden from the report by default |
+| [0029](0029-the-easy-adjust-threshold-is-changed-with-prices-refresh.md) | The plugin changes the easy-adjust threshold with the `prices:refresh` scope |
+| [0030](0030-differences-of-50-percent-or-more-ask-to-check-the-link.md) | Differences of 50% or more ask the user to check the link |

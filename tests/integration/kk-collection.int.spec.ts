@@ -94,7 +94,7 @@ describe('KuantoKusta price collection', () => {
     // The queue and the schedule see only this file's stores.
     hub = onlyStores(prisma, () => created)
     runs = new CollectionRunsService(hub, new AuditService())
-    settings = new KkStoreSettingsService(prisma)
+    settings = new KkStoreSettingsService(prisma, new AuditService())
     offersSync = new OffersSyncService(
       prisma,
       credentials,
