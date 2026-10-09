@@ -48,6 +48,7 @@ checks. The store is always the one the token belongs to; no route accepts a sto
 | `GET /v1/plugin/kuantokusta/offers/{id}/history` | `prices:read` | Every comparison of one offer, newest first |
 | `GET /v1/plugin/kuantokusta/settings/easy-adjust` | `prices:read` | The store's "easy adjust" threshold, in cents |
 | `PUT /v1/plugin/kuantokusta/settings/easy-adjust` | `prices:refresh` | Changes it. Takes effect on the next read; recorded in the audit log |
+| `GET /v1/plugin/store` | `prices:read` | The store's name, and the name to show to its users (`brandName`, decision 0014) |
 | `GET /health/live`, `GET /health/ready` | none | For the host |
 
 Errors always have the same shape:

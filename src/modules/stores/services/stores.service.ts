@@ -88,6 +88,11 @@ export class StoresService {
     }
   }
 
+  async findById(id: string): Promise<Store | null> {
+    const row = await this.prisma.stores.findUnique({ where: { id } })
+    return row ? toStore(row) : null
+  }
+
   async findBySlug(slug: string): Promise<Store | null> {
     const row = await this.prisma.stores.findUnique({ where: { slug } })
     return row ? toStore(row) : null
