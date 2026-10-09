@@ -404,8 +404,8 @@ Also:
   first, in pages (`before` = the previous `nextCursor`).
 - `GET` and `PUT /v1/plugin/kuantokusta/settings/easy-adjust`: the threshold in cents.
   Changing it needs `prices:refresh` (decision 0029) and is recorded in the audit log.
-  Before the first collection the store has no settings yet: reading answers the
-  default (10) and changing answers 409 `kk_settings_missing`.
+  Before it is ever changed, reading answers the default (10). It can be changed
+  before the store's first collection.
 
 ## Timing
 

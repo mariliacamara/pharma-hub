@@ -299,7 +299,22 @@ describe('operator commands', () => {
       'Offers: 345 listed, 2 delisted',
       'Appears on KuantoKusta as: not known yet '
       + '(the first collection works it out)',
+      'Easy adjust up to 10 cents',
       'Latest collection: none yet'
+    ])
+  })
+
+  it('shows a threshold that was set before the store was recognised', async () => {
+    const { run, lines } = setup('x', 'readable', {
+      settings: { identity: null, easyAdjustCents: 25 }
+    })
+
+    await run('kk:status', '--store', 'zincomed')
+
+    expect(lines.slice(2, 4)).toEqual([
+      'Appears on KuantoKusta as: not known yet '
+      + '(the first collection works it out)',
+      'Easy adjust up to 25 cents'
     ])
   })
 
@@ -315,8 +330,8 @@ describe('operator commands', () => {
     await run('kk:status', '--store', 'zincomed')
 
     expect(lines.slice(2)).toEqual([
-      'Appears on KuantoKusta as: zincomed (seller id 4321); '
-      + 'easy adjust up to 10 cents',
+      'Appears on KuantoKusta as: zincomed (seller id 4321)',
+      'Easy adjust up to 10 cents',
       'Latest collection: blocked (blocked_by_site), '
       + 'asked for 2026-10-08T12:00:00.000Z'
     ])

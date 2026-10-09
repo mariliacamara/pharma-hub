@@ -4,7 +4,6 @@ import {
   ApiBody,
   ApiOkResponse,
   ApiOperation,
-  ApiResponse,
   ApiTags
 } from '@nestjs/swagger'
 import { z } from 'zod/v4'
@@ -70,16 +69,11 @@ export class KkSettingsController {
     summary: 'Change the store\'s "easy adjust" threshold',
     description:
       'Takes effect on the next read of the report; nothing is recalculated. '
-      + 'Recorded in the audit log.'
+      + 'It can be set before the store\'s first collection. Recorded in the '
+      + 'audit log.'
   })
   @ApiBody({ schema: { ...EASY_ADJUST_SCHEMA, additionalProperties: false } })
   @ApiOkResponse({ schema: EASY_ADJUST_SCHEMA })
-  @ApiResponse({
-    status: 409,
-    description:
-      '`kk_settings_missing`: the store\'s settings are created by its first '
-      + 'collection'
-  })
   async setEasyAdjust(
     @CurrentPrincipal() principal: TokenPrincipal,
     @Body({ schema: easyAdjustBody }) body: z.infer<typeof easyAdjustBody>

@@ -8,8 +8,11 @@ import type { AuditActor } from '#/modules/audit/services/audit.service'
 import type { StoreIdentity } from '../domain/comparison'
 
 export interface KkStoreSettings {
-  /** How the store's own offer is recognised on a KuantoKusta page. */
-  identity: StoreIdentity
+  /**
+   * How the store's own offer is recognised on a KuantoKusta page. Null
+   * until the first collection works it out, or an operator sets it.
+   */
+  identity: StoreIdentity | null
   /** "Easy adjust": the store is more expensive by at most this much. */
   easyAdjustCents: number
 }
@@ -26,17 +29,6 @@ export class InvalidKkSettingsError extends Error {
   constructor(problem: string) {
     super(problem)
     this.name = 'InvalidKkSettingsError'
-  }
-}
-
-/** The store has no KuantoKusta settings yet: its identity is not known. */
-export class KkSettingsMissingError extends Error {
-  constructor() {
-    super(
-      'The store\'s KuantoKusta settings do not exist yet; they are created by '
-      + 'the first collection, or with kk:configure'
-    )
-    this.name = 'KkSettingsMissingError'
   }
 }
 
@@ -61,7 +53,9 @@ export class KkStoreSettingsService {
     )
     if (!row) return null
     return {
-      identity: { storeSlug: row.store_slug, sellerId: row.seller_id },
+      identity: row.store_slug === null
+        ? null
+        : { storeSlug: row.store_slug, sellerId: row.seller_id },
       easyAdjustCents: row.easy_adjust_cents
     }
   }
@@ -127,21 +121,21 @@ export class KkStoreSettingsService {
         where: { store_id: storeId },
         select: { easy_adjust_cents: true }
       })
-      // The row is created when the store's identity on KuantoKusta is
-      // known, which the first collection works out by itself.
-      if (!current) {
-        throw new KkSettingsMissingError()
-      }
-      if (current.easy_adjust_cents === cents) return
-      await tx.kk_store_settings.update({
+      const fromCents = current?.easy_adjust_cents ?? DEFAULT_EASY_ADJUST_CENTS
+      if (current && fromCents === cents) return
+      // The row may not exist yet: it then holds only the threshold, and the
+      // first collection adds how the store appears on KuantoKusta.
+      await tx.kk_store_settings.upsert({
         where: { store_id: storeId },
-        data: { easy_adjust_cents: cents, updated_at: new Date() }
+        create: { store_id: storeId, easy_adjust_cents: cents },
+        update: { easy_adjust_cents: cents, updated_at: new Date() }
       })
+      if (fromCents === cents) return
       await this.audit.record(tx, {
         actor,
         action: 'kk_settings.easy_adjust_changed',
         storeId,
-        details: { fromCents: current.easy_adjust_cents, toCents: cents }
+        details: { fromCents, toCents: cents }
       })
     })
   }
