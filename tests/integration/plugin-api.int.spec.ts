@@ -30,6 +30,7 @@ import {
 
 const CREDENTIAL = '/v1/plugin/kuantokusta/credential'
 const OFFERS = '/v1/plugin/kuantokusta/offers'
+const STORE = '/v1/plugin/store'
 const ALL: TokenScope[] = ['credentials:write', 'prices:read', 'prices:refresh']
 
 // The whole application over HTTP, with a real database and a fake
@@ -81,6 +82,31 @@ describe('plugin API', () => {
     created.push(storeA, storeB)
     tokenA = await tokenFor(storeA, ALL)
     tokenB = await tokenFor(storeB, ALL)
+  })
+
+  describe('the store', () => {
+    it('tells each token the name of its own store and the name to show', async () => {
+      await prisma.stores.update({
+        where: { id: storeA.id },
+        data: { brand_name: 'ZincoGroup Hub' }
+      })
+
+      const a = await http().get(STORE).set(as(tokenA))
+      const b = await http().get(STORE).set(as(tokenB))
+
+      expect(a.status).toBe(200)
+      expect(a.body).toEqual({ name: 'Test api-a', brandName: 'ZincoGroup Hub' })
+      // Store B keeps the default of the column.
+      expect(b.body).toEqual({ name: 'Test api-b', brandName: 'Pharma Hub' })
+    })
+
+    it('needs prices:read', async () => {
+      const writeOnly = await tokenFor(storeA, ['credentials:write'])
+      const response = await http().get(STORE).set(as(writeOnly))
+
+      expect(response.status).toBe(403)
+      expect(response.body.error.code).toBe('insufficient_scope')
+    })
   })
 
   describe('authentication', () => {
