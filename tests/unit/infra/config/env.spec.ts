@@ -31,7 +31,10 @@ describe('parseEnv', () => {
       DATABASE_URL: valid.DATABASE_URL,
       CREDENTIALS_MASTER_KEY: { version: 1, key: masterBytes },
       CREDENTIALS_PREVIOUS_KEYS: [],
-      KK_SELLER_API_BASE_URL: 'https://seller.kuantokusta.pt/api'
+      KK_SELLER_API_BASE_URL: 'https://seller.kuantokusta.pt/api',
+      KK_SITE_BASE_URL: 'https://www.kuantokusta.pt',
+      KK_COLLECTOR_USER_AGENT:
+        'PharmaHubPriceReport/1.0 (price report for partner stores)'
     })
   })
 
@@ -231,5 +234,90 @@ describe('parseEnv', () => {
         })
       ).toEqual([`KK_SELLER_API_BASE_URL: ${rule}`])
     })
+  })
+
+  describe('KK_SITE_BASE_URL', () => {
+    it('accepts plain HTTP for a local fake, outside production only', () => {
+      const local = { ...valid, KK_SITE_BASE_URL: 'http://127.0.0.1:9' }
+
+      expect(parseEnv({ ...local, NODE_ENV: 'test' }).KK_SITE_BASE_URL)
+        .toBe('http://127.0.0.1:9')
+      expect(problemsOf({ ...local, NODE_ENV: 'production' })).toEqual([
+        'KK_SITE_BASE_URL: must use https',
+        'KK_SITE_BASE_URL: must be an address of kuantokusta.pt'
+      ])
+    })
+
+    it.each([
+      'https://www.kuantokusta.pt.evil.example',
+      'https://evil.example',
+      'https://user:secret@www.kuantokusta.pt',
+      'https://www.kuantokusta.pt/?x=1',
+      'not a url'
+    ])('in production, only reads pages of kuantokusta.pt, not %s', (url) => {
+      const problems = problemsOf({ ...valid, KK_SITE_BASE_URL: url })
+
+      expect(problems.length).toBeGreaterThan(0)
+      expect(
+        problems.every((problem) => problem.startsWith('KK_SITE_BASE_URL: '))
+      ).toBe(true)
+      // The value is never echoed back.
+      expect(problems.join(' ')).not.toContain('evil')
+      expect(problems.join(' ')).not.toContain('secret')
+    })
+  })
+
+  describe('KK_COLLECTOR_USER_AGENT', () => {
+    it.each([
+      'PharmaHubPriceReport/1.0',
+      'PharmaHubPriceReport/1.0 (price report for partner stores)',
+      'ZincoGroupHub/2.1 (+https://hub.example/about; contact@hub.example)'
+    ])('accepts a name that says what it is: %s', (userAgent) => {
+      expect(
+        parseEnv({ ...valid, KK_COLLECTOR_USER_AGENT: userAgent })
+          .KK_COLLECTOR_USER_AGENT
+      ).toBe(userAgent)
+    })
+
+    it.each([
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Mozilla/5.0 (compatible; PharmaHub/1.0)',
+      'PharmaHub/1.0 (like Chrome/120.0)',
+      'PharmaHub/1.0 Safari/605.1.15',
+      'PharmaHub/1.0 (Gecko)',
+      'curl',
+      '',
+      'PharmaHub',
+      'PharmaHub/1.0 (two\nlines)'
+    ])('refuses a name that imitates a browser or says nothing: %j', (userAgent) => {
+      expect(
+        problemsOf({ ...valid, KK_COLLECTOR_USER_AGENT: userAgent })
+      ).toEqual([
+        'KK_COLLECTOR_USER_AGENT: must look like "Name/1.0 (who is reading '
+        + 'and why)" and must not imitate a browser'
+      ])
+    })
+  })
+
+  describe('KK_COLLECTION_DAILY_AT', () => {
+    it('is off unless set', () => {
+      expect(parseEnv(valid).KK_COLLECTION_DAILY_AT).toBeUndefined()
+    })
+
+    it.each(['00:00', '06:30', '23:59'])('accepts %s', (time) => {
+      expect(
+        parseEnv({ ...valid, KK_COLLECTION_DAILY_AT: time })
+          .KK_COLLECTION_DAILY_AT
+      ).toBe(time)
+    })
+
+    it.each(['24:00', '6:30', '06:60', '0630', 'daily', ''])(
+      'refuses %j',
+      (time) => {
+        expect(problemsOf({ ...valid, KK_COLLECTION_DAILY_AT: time })).toEqual([
+          'KK_COLLECTION_DAILY_AT: must be a time such as 06:30'
+        ])
+      }
+    )
   })
 })

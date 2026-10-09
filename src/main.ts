@@ -6,6 +6,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
 import { AppModule } from './app.module'
 
 import { env } from './infra/config/env'
+import { CollectionScheduler } from './modules/kuantokusta/services/collection.scheduler'
+import { CollectionWorker } from './modules/kuantokusta/services/collection.worker'
 
 const production = env.NODE_ENV === 'production'
 
@@ -51,3 +53,10 @@ if (!production) {
 }
 
 await app.listen(env.PORT, '0.0.0.0')
+
+// The price collection runs inside this process: one worker that carries out
+// the collections waiting in the database, and a clock that asks for one per
+// day when a time is configured. Started here and nowhere else, so an
+// operator command or a test never starts a second worker.
+app.get(CollectionWorker).start()
+app.get(CollectionScheduler).start(env.KK_COLLECTION_DAILY_AT)

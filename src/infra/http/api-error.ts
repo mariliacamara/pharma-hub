@@ -8,13 +8,18 @@ import { HttpException } from '@nestjs/common'
  * reworded. Neither ever contains a secret or an internal detail.
  */
 export class ApiError extends HttpException {
+  /** Sent as the `Retry-After` header: when trying again makes sense. */
+  readonly retryAfterSeconds: number | null
+
   constructor(
     status: number,
     readonly code: string,
-    message: string
+    message: string,
+    options: { retryAfterSeconds?: number } = {}
   ) {
     super(message, status)
     this.name = 'ApiError'
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null
   }
 }
 

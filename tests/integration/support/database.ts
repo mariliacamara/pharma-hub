@@ -47,3 +47,26 @@ export async function deleteStores(
     where: { id: { in: stores.map((store) => store.id) } }
   })
 }
+
+/**
+ * The same client, except that it only knows the stores a test created.
+ *
+ * The collection worker and the daily schedule look at every store of the
+ * hub. Given this client, a test stays inside its own stores, so it can run
+ * against a database that also holds others without touching their runs.
+ */
+export function onlyStores(
+  prisma: PrismaService,
+  stores: () => readonly TestStore[]
+): PrismaService {
+  const own = {
+    findMany: async () => stores().map(({ id }) => ({ id }))
+  }
+  return new Proxy(prisma, {
+    get(target, property) {
+      if (property === 'stores') return own
+      const value: unknown = Reflect.get(target, property, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    }
+  })
+}

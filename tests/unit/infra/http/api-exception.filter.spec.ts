@@ -54,6 +54,15 @@ describe('ApiExceptionFilter', () => {
     })
   })
 
+  it('says when to try again, when the error knows', () => {
+    const sent = answerTo(
+      new ApiError(429, 'kk_run_too_soon', 'Later', { retryAfterSeconds: 840 })
+    )
+
+    expect(sent.status).toBe(429)
+    expect(sent.headers).toEqual(['Retry-After: 840'])
+  })
+
   it('tells the client how to authenticate on a 401', () => {
     const sent = answerTo(new ApiError(401, 'invalid_token', 'No'))
 

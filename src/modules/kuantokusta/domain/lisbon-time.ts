@@ -68,3 +68,25 @@ export function lisbonWallTimeToInstant(value: string): Date | null {
   const firstGuess = wallAsUtc - lisbonOffsetAt(wallAsUtc)
   return new Date(wallAsUtc - lisbonOffsetAt(firstGuess))
 }
+
+/** The calendar date in Lisbon at that instant, as YYYY-MM-DD. */
+export function lisbonDateOf(instant: Date): string {
+  const parts: Record<string, string> = {}
+  for (const { type, value } of LISBON.formatToParts(instant)) {
+    parts[type] = value
+  }
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+/**
+ * The instant at which a daily job set for `time` (HH:MM, Lisbon) is due on
+ * the Lisbon day that contains `now`.
+ *
+ * Written in Lisbon time, so it stays at the same hour on the clock all
+ * year. A schedule written in UTC would move by an hour twice a year.
+ */
+export function lisbonDailyInstant(now: Date, time: string): Date {
+  const due = lisbonWallTimeToInstant(`${lisbonDateOf(now)} ${time}:00`)
+  if (!due) throw new RangeError(`Not a time of day: ${time}`)
+  return due
+}
