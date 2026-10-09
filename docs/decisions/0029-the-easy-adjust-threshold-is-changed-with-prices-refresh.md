@@ -20,13 +20,16 @@ recalculation. The plugin needs a route to read and change it. Tokens have three
 - A change is written to the audit log (`kk_settings.easy_adjust_changed`, with the old
   and the new value), from the plugin and from `kk:configure` alike. Setting the value
   it already has records nothing.
-- The settings row is created when the store's identity on KuantoKusta is known, which
-  the first collection works out. Before that, the route answers 409
-  `kk_settings_missing`, and reading answers the default.
+- The settings row was first created only when the store's identity on KuantoKusta was
+  known, so the route answered 409 `kk_settings_missing` before a first collection.
+  Changed on 2026-10-09: the threshold can be set at any time. A row without an
+  identity holds only the threshold, and the first collection adds the identity to it.
+  Before any change, reading answers the default.
 
 ## Consequences
 
-- No migration, and Zincomed's token, issued with every scope, keeps working.
+- Zincomed's token, issued with every scope, keeps working. (One migration came
+  later, to let the row exist before the identity is known.)
 - A token that can ask for collections can also change the threshold. The threshold only
   changes which rows are highlighted; it changes no price and reads nothing from
   KuantoKusta, so the extra power is small.

@@ -498,9 +498,9 @@ export class CollectionService {
       return offers ? [{ apiPriceCents: target.apiPriceCents, offers }] : []
     })
 
-    const stored = await this.settings.get(storeId)
-    if (stored) {
-      const { identity } = stored
+    // A store can have settings (its threshold) before it has an identity.
+    const identity = (await this.settings.get(storeId))?.identity
+    if (identity) {
       if (identity.sellerId !== null) return { kind: 'known', store: identity }
 
       // The slug is known; the seller id, a steadier key, may be on the pages.

@@ -17,6 +17,7 @@ import { PrismaService } from '#/infra/database/prisma.service'
 import { uuidV7 } from '#/infra/ids/uuid-v7'
 import type { TokenScope } from '#/modules/api-tokens/domain/token-principal'
 import { ApiTokensService } from '#/modules/api-tokens/services/api-tokens.service'
+import { KkStoreSettingsService } from '#/modules/kuantokusta/services/kk-store-settings.service'
 
 import { createStore, deleteStores } from './support/database'
 import type { TestStore } from './support/database'
@@ -503,11 +504,35 @@ describe('plugin API: price report', () => {
       }
     })
 
-    it('says so when the store has no settings yet', async () => {
+    it('can be changed before the store\'s first collection', async () => {
+      // Store B never had a collection, so the hub does not know yet how it
+      // appears on KuantoKusta.
       expect((await http().get(EASY_ADJUST).set(as(tokenB))).body).toEqual({ cents: 10 })
+
       const response = await http().put(EASY_ADJUST).set(as(tokenB)).send({ cents: 20 })
-      expect(response.status).toBe(409)
-      expect(response.body.error.code).toBe('kk_settings_missing')
+
+      expect(response.status).toBe(200)
+      expect(response.body).toEqual({ cents: 20 })
+      expect((await http().get(EASY_ADJUST).set(as(tokenB))).body).toEqual({ cents: 20 })
+      // Only the threshold was stored: the identity is still to be found.
+      expect(await app.get(KkStoreSettingsService).get(storeB.id)).toEqual({
+        identity: null,
+        easyAdjustCents: 20
+      })
+      // And store A's threshold did not move.
+      expect((await http().get(EASY_ADJUST).set(as(tokenA))).body).not.toEqual({ cents: 20 })
+    })
+
+    it('keeps a threshold set early when the identity is found later', async () => {
+      const settings = app.get(KkStoreSettingsService)
+      await http().put(EASY_ADJUST).set(as(tokenB)).send({ cents: 35 })
+
+      await settings.setIdentity(storeB.id, { storeSlug: 'loja-b-early', sellerId: 987_001 })
+
+      expect(await settings.get(storeB.id)).toEqual({
+        identity: { storeSlug: 'loja-b-early', sellerId: 987_001 },
+        easyAdjustCents: 35
+      })
     })
   })
 

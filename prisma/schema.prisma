@@ -163,7 +163,7 @@ model kk_store_offers {
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model kk_store_settings {
   store_id          String   @id @db.Uuid
-  store_slug        String   @unique
+  store_slug        String?  @unique
   seller_id         Int?     @unique
   easy_adjust_cents Int      @default(10)
   created_at        DateTime @default(now()) @db.Timestamptz(6)

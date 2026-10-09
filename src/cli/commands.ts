@@ -13,9 +13,9 @@ import type {
 } from '#/modules/kuantokusta/services/collection-runs.service'
 import type { KkCredentialService } from '#/modules/kuantokusta/services/kk-credential.service'
 import {
+  DEFAULT_EASY_ADJUST_CENTS,
   InvalidKkSettingsError,
-  KkIdentityTakenError,
-  KkSettingsMissingError
+  KkIdentityTakenError
 } from '#/modules/kuantokusta/services/kk-store-settings.service'
 import type { KkStoreSettingsService } from '#/modules/kuantokusta/services/kk-store-settings.service'
 import type { OffersSyncService } from '#/modules/kuantokusta/services/offers-sync.service'
@@ -451,7 +451,6 @@ export async function runCommand(
         if (
           error instanceof InvalidKkSettingsError
           || error instanceof KkIdentityTakenError
-          || error instanceof KkSettingsMissingError
         ) {
           throw new CheckFailedError(error.message)
         }
@@ -460,8 +459,8 @@ export async function runCommand(
 
       const settings = await services.kkSettings.get(store.id)
       io.write(`Settings of "${store.slug}" for KuantoKusta:`)
-      io.write(`  appears on KuantoKusta as: ${settings?.identity.storeSlug}`)
-      io.write(`  seller id:                 ${settings?.identity.sellerId ?? 'not known yet'}`)
+      io.write(`  appears on KuantoKusta as: ${settings?.identity?.storeSlug ?? 'not known yet'}`)
+      io.write(`  seller id:                 ${settings?.identity?.sellerId ?? 'not known yet'}`)
       io.write(`  easy adjust up to:         ${settings?.easyAdjustCents} cents`)
       return
     }
@@ -501,12 +500,14 @@ export async function runCommand(
 
       const settings = await services.kkSettings.get(store.id)
       io.write(
-        settings
+        settings?.identity
           ? `Appears on KuantoKusta as: ${settings.identity.storeSlug} `
-          + `(seller id ${settings.identity.sellerId ?? 'not known yet'}); `
-          + `easy adjust up to ${settings.easyAdjustCents} cents`
+          + `(seller id ${settings.identity.sellerId ?? 'not known yet'})`
           : 'Appears on KuantoKusta as: not known yet '
             + '(the first collection works it out)'
+      )
+      io.write(
+        `Easy adjust up to ${settings?.easyAdjustCents ?? DEFAULT_EASY_ADJUST_CENTS} cents`
       )
       const [latest] = await services.kkRuns.list(store.id, 1)
       io.write(
