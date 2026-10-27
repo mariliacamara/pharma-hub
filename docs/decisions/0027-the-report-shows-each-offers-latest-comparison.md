@@ -1,6 +1,6 @@
 # 0027. The report shows each offer's latest comparison, marked stale when it predates the latest collection
 
-- Status: Accepted
+- Status: Partly superseded by [0031](0031-the-report-lists-every-synced-offer.md). Still in force: the latest comparison of each offer and `stale`. No longer true: offers never compared are now listed
 - Date: 2026-10-09
 
 ## Context

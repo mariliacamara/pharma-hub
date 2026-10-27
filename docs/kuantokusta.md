@@ -385,10 +385,11 @@ and `services/report.service.ts`.
   row older than the most recent collection that ended is `stale`: that collection did
   not reach the offer. The answer carries that collection (`run`), with its status and
   error code.
-- **Only active offers by default** (listed and in stock, the ones a collection
-  compares). `state=out_of_stock|delisted|all` shows the others with their last
-  comparison; each row has `offerState` (decision 0028). Offers never compared are not
-  listed.
+- **Every synced offer by default** (decision 0031). `state=active|out_of_stock|delisted`
+  narrows it; `active` is listed and in stock, the ones a collection compares. Each row
+  has `offerState` (decision 0028) and, for offers out of stock or delisted, their last
+  comparison. An offer never compared is listed as `no_data`, with its own price and a
+  null `runId` and `comparedAt`.
 - **Derived on read, never stored:** `differencePercent`, `easyAdjust` (with the store's
   threshold, returned as `easyAdjustCents`), `checkLink` (returned with
   `checkLinkPercent`) and `totalDifferenceCents`, the difference with shipping.

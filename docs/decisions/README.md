@@ -49,3 +49,4 @@ Template:
 | [0028](0028-offers-no-longer-compared-are-hidden-by-default.md) | Offers that left the stock or KuantoKusta are hidden from the report by default |
 | [0029](0029-the-easy-adjust-threshold-is-changed-with-prices-refresh.md) | The plugin changes the easy-adjust threshold with the `prices:refresh` scope |
 | [0030](0030-differences-of-50-percent-or-more-ask-to-check-the-link.md) | Differences of 50% or more ask the user to check the link |
+| [0031](0031-the-report-lists-every-synced-offer.md) | The report lists every synced offer, compared or not |
