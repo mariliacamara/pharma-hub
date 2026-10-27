@@ -25,12 +25,18 @@ import {
  * previous comparison, marked `stale`, instead of dropping them from the
  * report. Percentage, "easy adjust" and "check the link" are worked out
  * here, on every read, and never stored.
+ *
+ * Every offer the store has synced is in the report (decision 0031), compared
+ * or not. One that was never compared (it was out of stock or off KuantoKusta
+ * in every collection) has no `runId` or `comparedAt` and shows as `no_data`
+ * with the price the store has on KuantoKusta.
  */
 export type ReportOutcome = ComparisonOutcome | 'no_data'
 
 /**
  * Where the offer stands today, according to the latest copy of the store's
- * offers. Only `active` offers are compared by a collection (decision 0028).
+ * offers. Only `active` offers are compared by a collection (decision 0028),
+ * but the report lists all of them (decision 0031).
  */
 export type OfferState = 'active' | 'out_of_stock' | 'delisted'
 
@@ -43,11 +49,15 @@ export interface ReportRow {
   storeUrl: string
   productUrl: string
   offerState: OfferState
-  runId: string
-  comparedAt: Date
+  /** Null when the offer was never compared. */
+  runId: string | null
+  /** Null when the offer was never compared. */
+  comparedAt: Date | null
   /** Older than the store's most recent collection that ended. */
   stale: boolean
+  /** `no_data` also when the offer was never compared. */
   outcome: ReportOutcome
+  /** The compared price, or the offer's own price when never compared. */
   storePriceCents: number
   /** Null when the page could not be read. */
   storeIsListed: boolean | null
@@ -136,8 +146,8 @@ interface ReportDbRow {
   product_url: string
   listing_status: string
   stock: number
-  run_id: string
-  compared_at: Date
+  run_id: string | null
+  compared_at: Date | null
   outcome: string
   store_price_cents: number
   store_is_listed: boolean | null
@@ -175,13 +185,15 @@ export class ReportService {
           >= ${CHECK_LINK_PERCENT} * greatest(c.store_price_cents, c.lowest_price_cents), false)`
     // Not made by the most recent collection that ended. Comparisons are
     // written when a collection ends, so one running now has none yet.
+    // An offer never compared has no comparison to be older than anything.
     const stale = run?.finishedAt
-      ? Prisma.sql`(c.run_id <> ${run.id}::uuid AND c.compared_at < ${run.finishedAt})`
+      ? Prisma.sql`coalesce(c.run_id <> ${run.id}::uuid
+          AND c.compared_at < ${run.finishedAt}, false)`
       : Prisma.sql`false`
 
     const filters = [stateFilter(query.state)]
     if (query.after !== undefined) filters.push(Prisma.sql`o.id > ${query.after}`)
-    if (query.outcome) filters.push(Prisma.sql`c.outcome = ${query.outcome}`)
+    if (query.outcome) filters.push(Prisma.sql`${outcomeOf} = ${query.outcome}`)
     if (query.easyAdjust !== undefined) {
       filters.push(query.easyAdjust ? easy : Prisma.sql`NOT ${easy}`)
     }
@@ -193,8 +205,10 @@ export class ReportService {
       const rows = await tx.$queryRaw<ReportDbRow[]>`
           SELECT o.id AS offer_id, o.kk_offer_ref, o.sku, o.ean, o.name,
                  o.store_url, p.url AS product_url, o.listing_status, o.stock,
-                 c.run_id::text AS run_id, c.compared_at, c.outcome,
-                 c.store_price_cents, c.store_is_listed, c.lowest_price_cents,
+                 c.run_id::text AS run_id, c.compared_at,
+                 ${outcomeOf} AS outcome,
+                 coalesce(c.store_price_cents, o.price_cents) AS store_price_cents,
+                 c.store_is_listed, c.lowest_price_cents,
                  c.lowest_store_name, c.difference_cents,
                  c.store_position::int AS store_position,
                  c.store_count::int AS store_count,
@@ -210,11 +224,11 @@ export class ReportService {
       // filters next to one page of rows.
       const [summary] = await tx.$queryRaw<SummaryDbRow[]>`
           SELECT count(*)::int AS offers,
-                 (count(*) FILTER (WHERE c.outcome = 'cheapest'))::int AS cheapest,
-                 (count(*) FILTER (WHERE c.outcome = 'tied'))::int AS tied,
-                 (count(*) FILTER (WHERE c.outcome = 'more_expensive'))::int AS more_expensive,
-                 (count(*) FILTER (WHERE c.outcome = 'only_store'))::int AS only_store,
-                 (count(*) FILTER (WHERE c.outcome = 'no_data'))::int AS no_data,
+                 (count(*) FILTER (WHERE ${outcomeOf} = 'cheapest'))::int AS cheapest,
+                 (count(*) FILTER (WHERE ${outcomeOf} = 'tied'))::int AS tied,
+                 (count(*) FILTER (WHERE ${outcomeOf} = 'more_expensive'))::int AS more_expensive,
+                 (count(*) FILTER (WHERE ${outcomeOf} = 'only_store'))::int AS only_store,
+                 (count(*) FILTER (WHERE ${outcomeOf} = 'no_data'))::int AS no_data,
                  (count(*) FILTER (WHERE ${easy}))::int AS "easyAdjust",
                  (count(*) FILTER (WHERE ${checkLink}))::int AS "checkLink",
                  (count(*) FILTER (WHERE ${stale}))::int AS stale
@@ -320,15 +334,19 @@ export class ReportService {
 }
 
 // The most recent comparison of the offer `o`, read through
-// kk_price_comparisons_offer_compared_idx. Offers never compared are left out.
+// kk_price_comparisons_offer_compared_idx. Offers never compared are kept, with
+// every column of `c` null (decision 0031).
 const latestComparison = Prisma.sql`
-  CROSS JOIN LATERAL (
+  LEFT JOIN LATERAL (
     SELECT *
       FROM kk_price_comparisons lc
      WHERE lc.store_offer_id = o.id
      ORDER BY lc.compared_at DESC, lc.id DESC
      LIMIT 1
-  ) c`
+  ) c ON true`
+
+// What the offer's comparison says: an offer never compared has no data.
+const outcomeOf = Prisma.sql`coalesce(c.outcome, 'no_data')`
 
 function stateFilter(state: ReportQuery['state']): Prisma.Sql {
   switch (state) {
@@ -370,6 +388,8 @@ function toReportRow(
     runId: row.run_id,
     comparedAt: row.compared_at,
     stale: run?.finishedAt != null
+      && row.run_id !== null
+      && row.compared_at !== null
       && row.run_id !== run.id
       && row.compared_at < run.finishedAt,
     outcome: row.outcome as ReportOutcome,

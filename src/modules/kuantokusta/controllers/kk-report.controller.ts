@@ -37,7 +37,7 @@ const hubId = z
 const reportQuery = z.strictObject({
   limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(100),
   after: hubId.optional(),
-  state: z.enum(STATES).default('active'),
+  state: z.enum(STATES).default('all'),
   outcome: z.enum(OUTCOMES).optional(),
   easyAdjust: z.stringbool().optional(),
   checkLink: z.stringbool().optional()
@@ -50,7 +50,7 @@ const historyQuery = z.strictObject({
   before: hubId.optional()
 })
 
-type ReportRowResponse = Omit<ReportRow, 'comparedAt'> & { comparedAt: string }
+type ReportRowResponse = Omit<ReportRow, 'comparedAt'> & { comparedAt: string | null }
 
 interface ReportResponse {
   run: RunResponse | null
@@ -87,18 +87,34 @@ const ROW_SCHEMA = {
       description:
         'Where the offer stands in the latest copy of the store\'s offers. '
         + 'Only `active` offers are compared by a collection, so the others '
-        + 'show their last comparison from before.'
+        + 'show their last comparison from before, or none.'
     },
-    runId: { type: 'string', format: 'uuid' },
-    comparedAt: { type: 'string', format: 'date-time' },
+    runId: {
+      type: ['string', 'null'],
+      format: 'uuid',
+      description: 'The collection that wrote the comparison; null when the offer was never compared'
+    },
+    comparedAt: {
+      type: ['string', 'null'],
+      format: 'date-time',
+      description: 'Null when the offer was never compared'
+    },
     stale: {
       type: 'boolean',
       description:
         'The comparison is older than the most recent collection: that '
         + 'collection did not reach this offer'
     },
-    outcome: { type: 'string', enum: [...OUTCOMES] },
-    storePriceCents: { type: 'integer', example: 1599 },
+    outcome: {
+      type: 'string',
+      enum: [...OUTCOMES],
+      description: '`no_data` also when the offer was never compared'
+    },
+    storePriceCents: {
+      type: 'integer',
+      example: 1599,
+      description: 'The compared price; the offer\'s own price when never compared'
+    },
     storeIsListed: { type: ['boolean', 'null'] },
     lowestPriceCents: NULLABLE_INTEGER,
     lowestStoreName: NULLABLE_STRING,
@@ -171,9 +187,11 @@ export class KkReportController {
   @ApiOperation({
     summary: 'The price report: the latest comparison of each offer',
     description:
-      'One row per offer, with its most recent comparison, even when the '
-      + 'latest collection did not reach it (then `stale` is true). Offers '
-      + 'never compared are not listed. Prices are integer cents; percentage, '
+      'One row per offer the store has synced, with its most recent '
+      + 'comparison, even when the latest collection did not reach it (then '
+      + '`stale` is true). An offer never compared is listed too, as '
+      + '`no_data`, without `runId` or `comparedAt`. Prices are integer '
+      + 'cents; percentage, '
       + '`easyAdjust` and `checkLink` are worked out on every read. `run` is '
       + 'the most recent collection that ended, null when there was none. '
       + 'To read everything, repeat the call with `after` set to the '
@@ -188,8 +206,10 @@ export class KkReportController {
   @ApiQuery({
     name: 'state',
     required: false,
-    schema: { type: 'string', enum: [...STATES], default: 'active' },
-    description: '`active`: listed and in stock, the offers a collection compares'
+    schema: { type: 'string', enum: [...STATES], default: 'all' },
+    description:
+      '`all` (default): every offer. `active`: listed and in stock, the '
+      + 'offers a collection compares'
   })
   @ApiQuery({ name: 'outcome', required: false, schema: { type: 'string', enum: [...OUTCOMES] } })
   @ApiQuery({ name: 'easyAdjust', required: false, schema: { type: 'boolean' } })
@@ -227,7 +247,7 @@ export class KkReportController {
       summary: report.summary,
       rows: report.rows.map((row) => ({
         ...row,
-        comparedAt: row.comparedAt.toISOString()
+        comparedAt: row.comparedAt?.toISOString() ?? null
       })),
       nextCursor: report.nextCursor
     }

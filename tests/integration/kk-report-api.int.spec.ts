@@ -245,7 +245,7 @@ describe('plugin API: price report', () => {
   })
 
   it('lists the latest comparison of each active offer, with the derived fields', async () => {
-    const response = await http().get(REPORT).set(as(tokenA))
+    const response = await http().get(`${REPORT}?state=active`).set(as(tokenA))
 
     expect(response.status).toBe(200)
     expect(response.body.run).toMatchObject({
@@ -256,13 +256,15 @@ describe('plugin API: price report', () => {
     expect(response.body.easyAdjustCents).toBe(10)
     expect(response.body.checkLinkPercent).toBe(50)
     expect(response.body.nextCursor).toBeNull()
-    // Out of stock, delisted and never compared are left out by default.
+    // Out of stock and delisted are left out of `active`. An active offer that
+    // was never compared (just synced) is in it, waiting for the next collection.
     expect(ids(response.body)).toEqual([
       offers.easy,
       offers.dearer,
       offers.wrongPage,
       offers.unread,
-      offers.notReached
+      offers.notReached,
+      offers.neverCompared
     ])
 
     const [easy, dearer, wrongPage, unread, notReached] = response.body.rows
@@ -314,12 +316,12 @@ describe('plugin API: price report', () => {
     expect(notReached).toMatchObject({ runId: firstRun, outcome: 'tied', stale: true })
 
     expect(response.body.summary).toEqual({
-      offers: 5,
+      offers: 6,
       cheapest: 1,
       tied: 1,
       more_expensive: 2,
       only_store: 0,
-      no_data: 1,
+      no_data: 2,
       easyAdjust: 1,
       checkLink: 1,
       stale: 1
@@ -328,9 +330,9 @@ describe('plugin API: price report', () => {
 
   it('filters by outcome, easy adjust and the link check, keeping the summary whole', async () => {
     const get = async (query: string) => {
-      const response = await http().get(`${REPORT}?${query}`).set(as(tokenA))
+      const response = await http().get(`${REPORT}?state=active&${query}`).set(as(tokenA))
       expect(response.status).toBe(200)
-      expect(response.body.summary.offers).toBe(5)
+      expect(response.body.summary.offers).toBe(6)
       return ids(response.body)
     }
 
@@ -340,15 +342,19 @@ describe('plugin API: price report', () => {
       offers.dearer,
       offers.wrongPage,
       offers.unread,
-      offers.notReached
+      offers.notReached,
+      offers.neverCompared
     ])
     expect(await get('checkLink=true')).toEqual([offers.wrongPage])
-    expect(await get('checkLink=false&outcome=no_data')).toEqual([offers.unread])
+    expect(await get('checkLink=false&outcome=no_data')).toEqual([
+      offers.unread,
+      offers.neverCompared
+    ])
   })
 
-  it('shows offers that left the stock or KuantoKusta only when asked', async () => {
+  it('can narrow the report to the offers that left the stock or KuantoKusta', async () => {
     const all = await http().get(`${REPORT}?state=all`).set(as(tokenA))
-    expect(all.body.summary.offers).toBe(7)
+    expect(all.body.summary.offers).toBe(8)
     expect(
       Object.fromEntries(
         all.body.rows.map((row: { offerId: string, offerState: string }) => [
@@ -361,7 +367,7 @@ describe('plugin API: price report', () => {
       [offers.delisted]: 'delisted',
       [offers.easy]: 'active'
     })
-    expect(ids(all.body)).not.toContain(offers.neverCompared)
+    expect(ids(all.body)).toContain(offers.neverCompared)
 
     const outOfStock = await http().get(`${REPORT}?state=out_of_stock`).set(as(tokenA))
     expect(ids(outOfStock.body)).toEqual([offers.outOfStock])
@@ -369,6 +375,91 @@ describe('plugin API: price report', () => {
 
     const delisted = await http().get(`${REPORT}?state=delisted`).set(as(tokenA))
     expect(ids(delisted.body)).toEqual([offers.delisted])
+  })
+
+  it('lists every synced offer by default, compared or not', async () => {
+    const response = await http().get(REPORT).set(as(tokenA))
+
+    expect(response.status).toBe(200)
+    expect(ids(response.body)).toEqual([
+      offers.easy,
+      offers.dearer,
+      offers.wrongPage,
+      offers.unread,
+      offers.notReached,
+      offers.outOfStock,
+      offers.delisted,
+      offers.neverCompared
+    ])
+    expect(response.body.rows).toHaveLength(8)
+    // Same answer as asking for `all`.
+    const all = await http().get(`${REPORT}?state=all`).set(as(tokenA))
+    expect(response.body.rows).toEqual(all.body.rows)
+
+    expect(response.body.summary).toEqual({
+      offers: 8,
+      cheapest: 1,
+      tied: 3,
+      more_expensive: 2,
+      only_store: 0,
+      no_data: 2,
+      easyAdjust: 1,
+      checkLink: 1,
+      stale: 3
+    })
+  })
+
+  it('shows an offer that was never compared as no_data, with its own price', async () => {
+    const response = await http().get(REPORT).set(as(tokenA))
+    const row = response.body.rows.find(
+      (candidate: { offerId: string }) => candidate.offerId === offers.neverCompared
+    )
+
+    expect(row).toEqual({
+      offerId: offers.neverCompared,
+      offerRef: expect.stringMatching(/^p-9-\d+$/),
+      sku: expect.stringMatching(/^SKU-\d+$/),
+      ean: null,
+      name: 'never-compared',
+      storeUrl: 'https://zincomed.example/produto/never-compared',
+      productUrl: expect.stringMatching(/^https:\/\/www\.kuantokusta\.pt\/p\/\d+\/never-compared$/),
+      offerState: 'active',
+      runId: null,
+      comparedAt: null,
+      stale: false,
+      outcome: 'no_data',
+      storePriceCents: 1000,
+      storeIsListed: null,
+      lowestPriceCents: null,
+      lowestStoreName: null,
+      differenceCents: null,
+      differencePercent: null,
+      easyAdjust: false,
+      checkLink: false,
+      storePosition: null,
+      storeCount: null,
+      storeTotalCents: null,
+      lowestTotalCents: null,
+      lowestTotalStoreName: null,
+      totalDifferenceCents: null
+    })
+
+    // It answers to the outcome filter like any other no_data offer.
+    const noData = await http().get(`${REPORT}?outcome=no_data`).set(as(tokenA))
+    expect(ids(noData.body)).toEqual([offers.unread, offers.neverCompared])
+  })
+
+  it('keeps an out-of-stock offer that was never compared in its own state', async () => {
+    const soldOut = await addOffer(storeA, 'sold-out-from-the-start', { stock: 0 })
+    const gone = await addOffer(storeA, 'gone-from-the-start', { delisted: true })
+
+    const outOfStock = await http().get(`${REPORT}?state=out_of_stock`).set(as(tokenA))
+    expect(ids(outOfStock.body)).toEqual([offers.outOfStock, soldOut])
+    const delisted = await http().get(`${REPORT}?state=delisted`).set(as(tokenA))
+    expect(ids(delisted.body)).toEqual([offers.delisted, gone])
+    const active = await http().get(`${REPORT}?state=active`).set(as(tokenA))
+    expect(ids(active.body)).not.toContain(soldOut)
+    expect(ids(active.body)).not.toContain(gone)
   })
 
   it('pages through the report with the cursor', async () => {
@@ -385,13 +476,16 @@ describe('plugin API: price report', () => {
       pages++
     } while (cursor && pages < 10)
 
-    expect(pages).toBe(3)
+    expect(pages).toBe(4)
     expect(seen).toEqual([
       offers.easy,
       offers.dearer,
       offers.wrongPage,
       offers.unread,
-      offers.notReached
+      offers.notReached,
+      offers.outOfStock,
+      offers.delisted,
+      offers.neverCompared
     ])
   })
 
@@ -420,7 +514,7 @@ describe('plugin API: price report', () => {
       lowest: 1000
     })
 
-    const response = await http().get(REPORT).set(as(tokenA))
+    const response = await http().get(`${REPORT}?state=active`).set(as(tokenA))
     expect(response.body.run.id).toBe(secondRun)
     const row = response.body.rows.find(
       (candidate: { offerId: string }) => candidate.offerId === offers.notReached

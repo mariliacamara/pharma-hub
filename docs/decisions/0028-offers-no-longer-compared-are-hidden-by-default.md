@@ -1,6 +1,6 @@
 # 0028. Offers that left the stock or KuantoKusta are hidden from the report by default
 
-- Status: Accepted
+- Status: Partly superseded by [0031](0031-the-report-lists-every-synced-offer.md). Still in force: `offerState` and the `state` filter. No longer true: the report no longer hides these offers by default
 - Date: 2026-10-09
 
 ## Context
